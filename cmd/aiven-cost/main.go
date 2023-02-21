@@ -1,15 +1,14 @@
 package main
 
 import (
-	"encoding/json"
+	"context"
 	"flag"
 	"fmt"
-	"io"
-	"log"
-	"net/http"
 	"os"
+	"strconv"
 	"time"
 
+	"github.com/nais/aiven-cost/aiven"
 	"golang.org/x/exp/slog"
 )
 
@@ -23,92 +22,113 @@ var cfg = struct {
 	AivenToken: "",
 }
 
+type AivenCostItem struct {
+	InvoiceId   string
+	Environment string
+	Team        string
+	Date        time.Time
+	Service     string
+	Cost        float64
+	Tenant      string
+}
+
 func main() {
+	ctx := context.Background()
+
 	flag.StringVar(&cfg.APIHost, "api-host", cfg.APIHost, "API host")
 	flag.StringVar(&cfg.LogLevel, "log-level", "info", "which log level to output")
 	flag.StringVar(&cfg.AivenToken, "aiven-token", os.Getenv("AIVEN_TOKEN"), "Aiven API token")
+	flag.Parse()
 
-	client := &http.Client{}
-	resp, err := get(client, "/v1/project")
+	aivenClient := aiven.New(cfg.APIHost, cfg.AivenToken)
+	projects, err := aivenClient.GetProjects(ctx)
 	if err != nil {
-		slog.Error("failed to get projects: %v", err)
-		panic("Unable to continue without projects")
-	}
-	type BillingReport struct {
-		InvoiceId   *string
-		Environment *string
-		Team        *string
-		Date        *time.Time
-		Service     *string
-		CostInEuros *float64
-		Tenant      *string
+		Errorf(err, "failed to get projects")
 	}
 
-	type projects struct {
-		Projects []struct {
-			Name         string `json:"project_name"`
-			BillingGroup string `json:"billing_group_id"`
-		} `json:"projects"`
-	}
-	projectList := projects{}
-	err = json.Unmarshal(resp, &projectList)
-	if err != nil {
-		slog.Error("failed to unmarshal projects: %v", err)
-		panic("Unable to continue without projects")
-	}
-
-	type service struct {
-		Services []struct {
-			Tags struct {
-				Tenant string `json:"tenant"`
-			} `json:"tags"`
-		} `json:"services"`
-	}
-
-	for _, project := range projectList.Projects {
-		fmt.Printf("%v \n", project)
-		res := BillingReport{}
-		service := service{}
-		resp, err := get(client, fmt.Sprintf("/v1/project/%s/service", project.Name))
+	for _, project := range projects {
+		fmt.Println(project.Name)
+		invoices, err := aivenClient.GetInvoices(ctx, project.BillingGroup)
 		if err != nil {
-			slog.Error("failed to get services: %v", err)
-			panic("Unable to continue without services")
+			Errorf(err, "failed to get billing")
+			panic("Unable to continue without billing")
 		}
-		err = json.Unmarshal(resp, &service)
-		if err != nil {
-			slog.Error("failed to unmarshal services: %v", err)
-			panic("Unable to continue without services")
-		}
-		for _, s := range service.Services {
-			s := s
-			if s.Tags.Tenant != "" {
-				res.Tenant = &s.Tags.Tenant
-				break
+
+		for _, invoice := range invoices {
+			invoiceDetails, err := aivenClient.GetInvoiceDetails(ctx, project.BillingGroup, invoice.InvoiceId)
+			if err != nil {
+				Errorf(err, "failed to get billing")
+				panic("Unable to continue without billing")
+			}
+			for _, invoiceDetail := range invoiceDetails {
+				if invoiceDetail.ProjectName != project.Name {
+					continue
+				}
+				tags, err := aivenClient.GetServiceTags(ctx, project.Name, invoiceDetail.ServiceName)
+				if err != nil {
+					Errorf(err, "failed to get service tags")
+				}
+
+				cost, err := strconv.ParseFloat(invoiceDetail.Cost, 64)
+				if err != nil {
+					Errorf(err, "failed to parse cost")
+				}
+				billingReport := AivenCostItem{
+					InvoiceId:   invoice.InvoiceId,
+					Date:        invoiceDetail.TimestampBegin,
+					Service:     invoiceDetail.ServiceType,
+					Cost:        cost,
+					Tenant:      tags.Tenant,
+					Team:        tags.Team,
+					Environment: tags.Environment,
+				}
+				fmt.Printf("%#v\n", billingReport)
+
 			}
 		}
-		if res.Tenant == nil {
-			log.Printf("Tenant for %q is empty", project.Name)
+
+		/*services, err := aivenClient.GetServices(ctx, project.Name)
+		if err != nil {
+			Errorf(err, "failed to get services")
+			panic("Unable to continue without services")
 		}
-		fmt.Printf("%v\n", *res.Tenant)
-		break
+
+		for _, s := range services {
+			billingReport := AivenCostItem{}
+
+			if s.Tags.Tenant != "" {
+				billingReport.Tenant = s.Tags.Tenant
+			}
+			if s.Tags.Environment != "" {
+				billingReport.Environment = s.Tags.Environment
+			}
+			if s.Tags.Team != "" {
+				billingReport.Team = s.Tags.Team
+			} else {
+				billingReport.Team = "nais"
+			}
+
+			if billingReport.Tenant == "" {
+				Infof("Tenant for service %q in %q is empty", s.ServiceName, project.Name)
+			}
+			if billingReport.Environment == "" {
+				Infof("Environment for service %q in %q is empty", s.ServiceName, project.Name)
+			}
+			if billingReport.Team == "" {
+				Errorf(fmt.Errorf("team is empty"), "Team for %q is empty", project.Name)
+				Infof("Team for service %q in %q is empty", s.ServiceName, project.Name)
+			}
+			billingReport.CostInUSD =
+			// fmt.Printf("%#v\n", billingReport)
+		}*/
+
 	}
 }
 
-func get(client *http.Client, path string) ([]byte, error) {
-	req, err := http.NewRequest("GET", "https://"+cfg.APIHost+path, nil)
-	if err != nil {
-		return []byte{}, err
-	}
-	req.Header.Add("Authorization", fmt.Sprintf("aivenv1 %s", cfg.AivenToken))
+func Infof(format string, args ...any) {
+	slog.Default().Info(fmt.Sprintf(format, args...))
+}
 
-	resp, err := client.Do(req)
-	if err != nil {
-		return []byte{}, err
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return []byte{}, err
-	}
-	return body, nil
+func Errorf(err error, format string, args ...any) {
+	slog.Default().Error(fmt.Sprintf(format, args...), err)
 }
