@@ -105,8 +105,10 @@ func main() {
 					Team:           tags.Team,
 					Environment:    tags.Environment,
 				}
-				f.Write([]byte(billingReport.String() + "\n"))
-				f.Sync()
+				for _, line := range billingReport.SplitCostIme() {
+					f.Write([]byte(line + "\n"))
+					f.Sync()
+				}
 			}
 		}
 	}
