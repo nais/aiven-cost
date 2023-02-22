@@ -2,25 +2,10 @@ package aiven
 
 import "time"
 
-type Projects []Project
-
-type Project struct {
-	Name         string `json:"project_name"`
-	BillingGroup string `json:"billing_group_id"`
-}
-
-type Services []Service
-
 type Tags struct {
 	Tenant      string `json:"tenant"`
 	Environment string `json:"environment"`
 	Team        string `json:"team"`
-}
-
-type Service struct {
-	Tags        Tags   `json:"tags"`
-	ServiceName string `json:"service_name"`
-	ServiceType string `json:"service_type"`
 }
 
 type InvoiceDetail struct {
@@ -31,9 +16,20 @@ type InvoiceDetail struct {
 	Currency       string    `json:"local_currency"`
 	ServiceType    string    `json:"service_type"`
 	ProjectName    string    `json:"project_name"`
+	LineType       string    `json:"line_type"`
+	Description    string    `json:"description"`
 }
 
 type Invoice struct {
 	InvoiceId   string `json:"invoice_number"`
 	TotalIncVat string `json:"total_inc_vat"`
+}
+
+type BillingGroups []BillingGroup
+
+type BillingGroup struct {
+	AccountName      string `json:"account_name"`
+	BillingGroupId   string `json:"billing_group_id"`
+	BillingGroupName string `json:"billing_group_name"`
+	BillingCurrency  string `json:"billing_currency"`
 }

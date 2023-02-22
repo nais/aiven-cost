@@ -6,9 +6,10 @@ import (
 	"fmt"
 	"os"
 	"strconv"
-	"time"
+	"strings"
 
 	"github.com/nais/aiven-cost/aiven"
+	"github.com/nais/aiven-cost/billing"
 	"golang.org/x/exp/slog"
 )
 
@@ -22,16 +23,6 @@ var cfg = struct {
 	AivenToken: "",
 }
 
-type AivenCostItem struct {
-	InvoiceId   string
-	Environment string
-	Team        string
-	Date        time.Time
-	Service     string
-	Cost        float64
-	Tenant      string
-}
-
 func main() {
 	ctx := context.Background()
 
@@ -39,89 +30,85 @@ func main() {
 	flag.StringVar(&cfg.LogLevel, "log-level", "info", "which log level to output")
 	flag.StringVar(&cfg.AivenToken, "aiven-token", os.Getenv("AIVEN_TOKEN"), "Aiven API token")
 	flag.Parse()
+	f, err := os.Create("aiven-cost.log")
+	if err != nil {
+		panic(err)
+	}
+	defer f.Close()
 
 	aivenClient := aiven.New(cfg.APIHost, cfg.AivenToken)
-	projects, err := aivenClient.GetProjects(ctx)
+	billingGroups, err := aivenClient.GetBillingGroups(ctx)
 	if err != nil {
-		Errorf(err, "failed to get projects")
+		Errorf(err, "failed to get billing groups")
+		panic(err)
 	}
 
-	for _, project := range projects {
-		fmt.Println(project.Name)
-		invoices, err := aivenClient.GetInvoices(ctx, project.BillingGroup)
+	for _, billingGroup := range billingGroups {
+		fmt.Printf("%#v\n", billingGroup)
+
+		invoices, err := aivenClient.GetInvoices(ctx, billingGroup.BillingGroupId)
 		if err != nil {
-			Errorf(err, "failed to get billing")
-			panic("Unable to continue without billing")
+			Errorf(err, "failed to get invoices for billing group %s", billingGroup.BillingGroupId)
+			panic(err)
 		}
-
 		for _, invoice := range invoices {
-			invoiceDetails, err := aivenClient.GetInvoiceDetails(ctx, project.BillingGroup, invoice.InvoiceId)
+			invoiceDetails, err := aivenClient.GetInvoiceDetails(ctx, billingGroup.BillingGroupId, invoice.InvoiceId)
 			if err != nil {
-				Errorf(err, "failed to get billing")
-				panic("Unable to continue without billing")
+				Errorf(err, "failed to get invoice details for billing group %s and invoice %s", billingGroup.BillingGroupId, invoice.InvoiceId)
+				panic(err)
 			}
-			for _, invoiceDetail := range invoiceDetails {
-				if invoiceDetail.ProjectName != project.Name {
-					continue
-				}
-				tags, err := aivenClient.GetServiceTags(ctx, project.Name, invoiceDetail.ServiceName)
-				if err != nil {
-					Errorf(err, "failed to get service tags")
-				}
 
+			for _, invoiceDetail := range invoiceDetails {
+				tags, err := aivenClient.GetServiceTags(ctx, invoiceDetail.ProjectName, invoiceDetail.ServiceName)
+				if err != nil {
+					Warnf("failed to get service tags for project %s and service %s: %v", invoiceDetail.ProjectName, invoiceDetail.ServiceName, err)
+				}
 				cost, err := strconv.ParseFloat(invoiceDetail.Cost, 64)
 				if err != nil {
-					Errorf(err, "failed to parse cost")
+					Errorf(err, "failed to parse cost %s", invoiceDetail.Cost)
 				}
-				billingReport := AivenCostItem{
-					InvoiceId:   invoice.InvoiceId,
-					Date:        invoiceDetail.TimestampBegin,
-					Service:     invoiceDetail.ServiceType,
-					Cost:        cost,
-					Tenant:      tags.Tenant,
-					Team:        tags.Team,
-					Environment: tags.Environment,
-				}
-				fmt.Printf("%#v\n", billingReport)
 
+				if invoiceDetail.ServiceType == "kafka" {
+					tags.Team = "nais"
+				}
+
+				if invoiceDetail.LineType == "support_charge" && invoiceDetail.ServiceType == "" {
+					invoiceDetail.ServiceType = "support"
+					tags.Team = "nais"
+				} else if invoiceDetail.LineType == "credit_consumption" {
+					invoiceDetail.ServiceType = "credit"
+					tags.Team = "nais"
+				} else if invoiceDetail.LineType == "extra_charge" {
+					if invoiceDetail.Description == "Priority support" {
+						invoiceDetail.ServiceType = "priority_support"
+						tags.Team = "nais"
+					} else if strings.Contains(invoiceDetail.Description, "Missed DDS charges") {
+						invoiceDetail.ServiceType = "missed_dds_charges"
+						tags.Team = "nais"
+					} else {
+						// stupid to panic here, but we want to know about all the different extra charges
+						panic(fmt.Sprintf("unknown extra charge %#v", invoiceDetail))
+					}
+				} else if invoiceDetail.LineType != "service_charge" {
+					// stupid to panic here, but we want to know about all the different line types
+					panic(fmt.Sprintf("unknown line type %#v", invoiceDetail.LineType))
+				}
+
+				billingReport := billing.AivenCostItem{
+					BillingGroupId: string(billingGroup.BillingGroupId),
+					InvoiceId:      invoice.InvoiceId,
+					StartDate:      invoiceDetail.TimestampBegin,
+					EndDate:        invoiceDetail.TimestampEnd,
+					Service:        invoiceDetail.ServiceType,
+					Cost:           cost,
+					Tenant:         tags.Tenant,
+					Team:           tags.Team,
+					Environment:    tags.Environment,
+				}
+				f.Write([]byte(billingReport.String() + "\n"))
+				f.Sync()
 			}
 		}
-
-		/*services, err := aivenClient.GetServices(ctx, project.Name)
-		if err != nil {
-			Errorf(err, "failed to get services")
-			panic("Unable to continue without services")
-		}
-
-		for _, s := range services {
-			billingReport := AivenCostItem{}
-
-			if s.Tags.Tenant != "" {
-				billingReport.Tenant = s.Tags.Tenant
-			}
-			if s.Tags.Environment != "" {
-				billingReport.Environment = s.Tags.Environment
-			}
-			if s.Tags.Team != "" {
-				billingReport.Team = s.Tags.Team
-			} else {
-				billingReport.Team = "nais"
-			}
-
-			if billingReport.Tenant == "" {
-				Infof("Tenant for service %q in %q is empty", s.ServiceName, project.Name)
-			}
-			if billingReport.Environment == "" {
-				Infof("Environment for service %q in %q is empty", s.ServiceName, project.Name)
-			}
-			if billingReport.Team == "" {
-				Errorf(fmt.Errorf("team is empty"), "Team for %q is empty", project.Name)
-				Infof("Team for service %q in %q is empty", s.ServiceName, project.Name)
-			}
-			billingReport.CostInUSD =
-			// fmt.Printf("%#v\n", billingReport)
-		}*/
-
 	}
 }
 
@@ -131,4 +118,8 @@ func Infof(format string, args ...any) {
 
 func Errorf(err error, format string, args ...any) {
 	slog.Default().Error(fmt.Sprintf(format, args...), err)
+}
+
+func Warnf(format string, args ...any) {
+	slog.Default().Warn(fmt.Sprintf(format, args...))
 }

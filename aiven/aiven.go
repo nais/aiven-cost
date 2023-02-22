@@ -33,34 +33,23 @@ func (c *Client) do(ctx context.Context, v any, method, path string, body io.Rea
 	if err != nil {
 		return err
 	}
-	if resp.StatusCode != http.StatusOK {
+	if method == http.MethodGet && resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 	}
 	defer resp.Body.Close()
 	return json.NewDecoder(resp.Body).Decode(v)
 }
 
-func (c *Client) GetProjects(ctx context.Context) (Projects, error) {
-	projects := struct {
-		Projects Projects `json:"projects"`
+func (c *Client) GetBillingGroups(ctx context.Context) (BillingGroups, error) {
+	billingGroups := struct {
+		BillingGroups BillingGroups `json:"billing_groups"`
 	}{}
 
-	if err := c.do(ctx, &projects, "GET", "/v1/project", nil); err != nil {
-		return nil, err
-	}
-	return projects.Projects, nil
-}
-
-func (c *Client) GetServices(ctx context.Context, projectName string) (Services, error) {
-	services := struct {
-		Services Services `json:"services"`
-	}{}
-
-	if err := c.do(ctx, &services, "GET", "/v1/project/"+projectName+"/service", nil); err != nil {
+	if err := c.do(ctx, &billingGroups, http.MethodGet, "/v1/billing-group", nil); err != nil {
 		return nil, err
 	}
 
-	return services.Services, nil
+	return billingGroups.BillingGroups, nil
 }
 
 func (c *Client) GetInvoices(ctx context.Context, billingGroupId string) ([]Invoice, error) {
@@ -68,7 +57,7 @@ func (c *Client) GetInvoices(ctx context.Context, billingGroupId string) ([]Invo
 		Invoices []Invoice `json:"invoices"`
 	}{}
 
-	if err := c.do(ctx, &invoices, "GET", "/v1/billing-group/"+billingGroupId+"/invoice", nil); err != nil {
+	if err := c.do(ctx, &invoices, http.MethodGet, "/v1/billing-group/"+billingGroupId+"/invoice", nil); err != nil {
 		return nil, err
 	}
 
@@ -80,7 +69,7 @@ func (c *Client) GetInvoiceDetails(ctx context.Context, billingGroupId, invoiceI
 		InvoiceDetails []InvoiceDetail `json:"lines"`
 	}{}
 
-	if err := c.do(ctx, &invoiceDetails, "GET", "/v1/billing-group/"+billingGroupId+"/invoice/"+invoiceId+"/lines", nil); err != nil {
+	if err := c.do(ctx, &invoiceDetails, http.MethodGet, "/v1/billing-group/"+billingGroupId+"/invoice/"+invoiceId+"/lines", nil); err != nil {
 		return nil, err
 	}
 
@@ -91,7 +80,7 @@ func (c *Client) GetServiceTags(ctx context.Context, projectName, serviceName st
 	tags := struct {
 		Tags Tags `json:"tags"`
 	}{}
-	if err := c.do(ctx, &tags, "GET", "/v1/project/"+projectName+"/service/"+serviceName+"/tags", nil); err != nil {
+	if err := c.do(ctx, &tags, http.MethodGet, "/v1/project/"+projectName+"/service/"+serviceName+"/tags", nil); err != nil {
 		return Tags{}, err
 	}
 
