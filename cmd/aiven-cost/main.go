@@ -9,8 +9,10 @@ import (
 	"strings"
 
 	"github.com/nais/aiven-cost/aiven"
+	"github.com/nais/aiven-cost/bigquery"
 	"github.com/nais/aiven-cost/billing"
-	"golang.org/x/exp/slog"
+	"github.com/nais/aiven-cost/currency"
+	"github.com/nais/aiven-cost/log"
 )
 
 var cfg = struct {
@@ -37,9 +39,25 @@ func main() {
 	defer f.Close()
 
 	aivenClient := aiven.New(cfg.APIHost, cfg.AivenToken)
+
+	currencyClient := currency.New()
+	currency, err := currencyClient.GetRates(ctx)
+	if err != nil {
+		log.Errorf(err, "failed to get currency rates")
+	}
+	fmt.Println("Month\tEUR\tUSD")
+	for _, v := range currency {
+		fmt.Printf("%s\t%s\t%s\n", v.TimePeriod, v.EUR, v.USD)
+	}
+
+	bqClient := bigquery.New(ctx)
+	err = bqClient.CreateOrUpdateCurrencyRates(ctx, currency)
+	if err != nil {
+		log.Errorf(err, "failed to create or update currency rates")
+	}
 	billingGroups, err := aivenClient.GetBillingGroups(ctx)
 	if err != nil {
-		Errorf(err, "failed to get billing groups")
+		log.Errorf(err, "failed to get billing groups")
 		panic(err)
 	}
 
@@ -48,24 +66,24 @@ func main() {
 
 		invoices, err := aivenClient.GetInvoices(ctx, billingGroup.BillingGroupId)
 		if err != nil {
-			Errorf(err, "failed to get invoices for billing group %s", billingGroup.BillingGroupId)
+			log.Errorf(err, "failed to get invoices for billing group %s", billingGroup.BillingGroupId)
 			panic(err)
 		}
 		for _, invoice := range invoices {
 			invoiceDetails, err := aivenClient.GetInvoiceDetails(ctx, billingGroup.BillingGroupId, invoice.InvoiceId)
 			if err != nil {
-				Errorf(err, "failed to get invoice details for billing group %s and invoice %s", billingGroup.BillingGroupId, invoice.InvoiceId)
+				log.Errorf(err, "failed to get invoice details for billing group %s and invoice %s", billingGroup.BillingGroupId, invoice.InvoiceId)
 				panic(err)
 			}
 
 			for _, invoiceDetail := range invoiceDetails {
 				tags, err := aivenClient.GetServiceTags(ctx, invoiceDetail.ProjectName, invoiceDetail.ServiceName)
 				if err != nil {
-					Warnf("failed to get service tags for project %s and service %s: %v", invoiceDetail.ProjectName, invoiceDetail.ServiceName, err)
+					log.Warnf("failed to get service tags for project %s and service %s: %v", invoiceDetail.ProjectName, invoiceDetail.ServiceName, err)
 				}
 				cost, err := strconv.ParseFloat(invoiceDetail.Cost, 64)
 				if err != nil {
-					Errorf(err, "failed to parse cost %s", invoiceDetail.Cost)
+					log.Errorf(err, "failed to parse cost %s", invoiceDetail.Cost)
 				}
 
 				if invoiceDetail.ServiceType == "kafka" {
@@ -104,6 +122,7 @@ func main() {
 					Tenant:         tags.Tenant,
 					Team:           tags.Team,
 					Environment:    tags.Environment,
+					Currency:       strings.ToUpper(invoiceDetail.Currency),
 				}
 				for _, line := range billingReport.SplitCostIme() {
 					f.Write([]byte(line + "\n"))
@@ -112,16 +131,4 @@ func main() {
 			}
 		}
 	}
-}
-
-func Infof(format string, args ...any) {
-	slog.Default().Info(fmt.Sprintf(format, args...))
-}
-
-func Errorf(err error, format string, args ...any) {
-	slog.Default().Error(fmt.Sprintf(format, args...), err)
-}
-
-func Warnf(format string, args ...any) {
-	slog.Default().Warn(fmt.Sprintf(format, args...))
 }

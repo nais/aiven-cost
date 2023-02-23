@@ -16,6 +16,7 @@ type AivenCostItem struct {
 	Service        string
 	Cost           float64
 	Tenant         string
+	Currency	   string
 }
 
 func (a *AivenCostItem) CostPerDay() float64 {
