@@ -45,10 +45,6 @@ func main() {
 	if err != nil {
 		log.Errorf(err, "failed to get currency rates")
 	}
-	fmt.Println("Month\tEUR\tUSD")
-	for _, v := range currency {
-		fmt.Printf("%s\t%s\t%s\n", v.TimePeriod, v.EUR, v.USD)
-	}
 
 	bqClient := bigquery.New(ctx)
 	err = bqClient.CreateOrUpdateCurrencyRates(ctx, currency)
@@ -124,7 +120,7 @@ func main() {
 					Environment:    tags.Environment,
 					Currency:       strings.ToUpper(invoiceDetail.Currency),
 				}
-				for _, line := range billingReport.SplitCostIme() {
+				for _, line := range billingReport.SplitCostPerDay() {
 					f.Write([]byte(line + "\n"))
 					f.Sync()
 				}

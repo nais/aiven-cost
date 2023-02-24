@@ -2,8 +2,13 @@ package bigquery
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"net/http"
 
 	"cloud.google.com/go/bigquery"
+	"google.golang.org/api/googleapi"
+	"google.golang.org/api/iterator"
 
 	"github.com/nais/aiven-cost/currency"
 	"github.com/nais/aiven-cost/log"
@@ -26,18 +31,60 @@ func New(ctx context.Context) *Client {
 		log.Errorf(err, "Failed to create client: %v")
 		panic(err)
 	}
+	defer client.Close()
 	return &Client{
 		client: client,
 	}
 }
 
+func (c *Client) TruncateCurrencyTable(ctx context.Context) {
+	q := c.client.Query(`DELETE FROM ` + ProjectID + "." + Dataset + "." + TableCurrencyRates + ` WHERE 1=1`)
+	it, err := q.Read(ctx)
+	if err != nil {
+		log.Errorf(err, "failed to truncate table")
+		panic(err)
+	}
+	for {
+		var values []bigquery.Value
+		err := it.Next(&values)
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			log.Errorf(err, "failed to truncate table")
+			panic(err)
+		}
+	}
+}
+
 func (c *Client) CreateOrUpdateCurrencyRates(ctx context.Context, currencyRates []currency.CurrencyRate) error {
 	dataset := c.client.Dataset(Dataset)
-	err := dataset.Table(TableCurrencyRates).Delete(ctx)
+	err := c.tableExists(ctx, ProjectID, Dataset, TableCurrencyRates)
 	if err != nil {
-		return err
+		if err.Error() != "dataset or table not found" {
+			log.Errorf(err, "failed to check if table exists")
+			panic(err)
+		} else if err.Error() == "dataset or table not found" {
+			err := c.createTable(ctx, dataset)
+			if err != nil {
+				return err
+			}
+		} else {
+			c.TruncateCurrencyTable(ctx)
+		}
 	}
+	c.client.Dataset(Dataset).Table(TableCurrencyRates)
+	for _, currencyRate := range currencyRates {
+		err = dataset.Table(TableCurrencyRates).Inserter().Put(ctx, currencyRate)
+		if err != nil {
+			log.Errorf(err, "failed to insert currency rate")
+			return err
+		}
+	}
+	return nil
+}
 
+func (c *Client) createTable(ctx context.Context, dataset *bigquery.Dataset) error {
 	schema, err := bigquery.InferSchema(currency.CurrencyRate{})
 	if err != nil {
 		log.Errorf(err, "failed to infer schema")
@@ -48,18 +95,19 @@ func (c *Client) CreateOrUpdateCurrencyRates(ctx context.Context, currencyRates 
 		log.Errorf(err, "failed to create table")
 		return err
 	}
+	return nil
+}
 
-	if err != nil {
-		log.Errorf(err, "failed to create table %s", TableCurrencyRates)
-		return err
-	}
-
-	/*for currencyRate := range currencyRates {
-		err = dataset.Table(TableCurrencyRates).Inserter().Put(ctx, currencyRate)
-		if err != nil {
-			log.Errorf(err, "failed to insert currency rate")
-			return err
+// tableExists checks wheter a table exists on a given dataset.
+func (c *Client) tableExists(ctx context.Context, projectID, datasetID, tableID string) error {
+	tableRef := c.client.Dataset(datasetID).Table(tableID)
+	if _, err := tableRef.Metadata(ctx); err != nil {
+		if e, ok := err.(*googleapi.Error); ok {
+			if e.Code == http.StatusNotFound {
+				return errors.New("dataset or table not found")
+			}
 		}
-	}*/
+	}
+	fmt.Println("Table found")
 	return nil
 }
