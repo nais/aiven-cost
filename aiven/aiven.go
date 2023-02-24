@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+
+	"github.com/nais/aiven-cost/bigquery"
+	"github.com/nais/aiven-cost/log"
 )
 
 type Client struct {
@@ -64,16 +67,46 @@ func (c *Client) GetInvoices(ctx context.Context, billingGroupId string) ([]Invo
 	return invoices.Invoices, nil
 }
 
-func (c *Client) GetInvoiceDetails(ctx context.Context, billingGroupId, invoiceId string) ([]InvoiceDetail, error) {
-	invoiceDetails := struct {
-		InvoiceDetails []InvoiceDetail `json:"lines"`
-	}{}
+func parseServiceType(serviceType string) string {
+	switch serviceType {
+	case "support_charge":
+	case "extra_charge":
+		return "support"
+	case "credit_consumption":
+		return "credit"
+	}
+	return serviceType
+}
 
-	if err := c.do(ctx, &invoiceDetails, http.MethodGet, "/v1/billing-group/"+billingGroupId+"/invoice/"+invoiceId+"/lines", nil); err != nil {
+func (c *Client) GetInvoiceDetails(ctx context.Context, billingGroupId, invoiceId string) ([]bigquery.Line, error) {
+	invoiceLines := struct {
+		InvoiceLines []InvoiceLine `json:"lines"`
+	}{}
+	ret := []bigquery.Line{}
+
+	if err := c.do(ctx, &invoiceLines, http.MethodGet, "/v1/billing-group/"+billingGroupId+"/invoice/"+invoiceId+"/lines", nil); err != nil {
 		return nil, err
 	}
 
-	return invoiceDetails.InvoiceDetails, nil
+	for _, invoiceDetail := range invoiceLines.InvoiceLines {
+		tags, err := c.GetServiceTags(ctx, invoiceDetail.ProjectName, invoiceDetail.ServiceName)
+		if err != nil {
+			log.Warnf("failed to get service tags for project %s and service %s: %v", invoiceDetail.ProjectName, invoiceDetail.ServiceName, err)
+		}
+		ret = append(ret, bigquery.Line{
+			InvoiceId:   invoiceId,
+			Environment: tags.Environment,
+			Team:        tags.Team,
+			Service:     parseServiceType(invoiceDetail.ServiceType),
+			Tenant:      tags.Tenant,
+			Status:      invoiceDetail.Status,
+			Cost:        invoiceDetail.Cost,
+			Date:        invoiceDetail.Date,
+		})
+
+	}
+
+	return ret, nil
 }
 
 func (c *Client) GetServiceTags(ctx context.Context, projectName, serviceName string) (Tags, error) {
@@ -85,4 +118,23 @@ func (c *Client) GetServiceTags(ctx context.Context, projectName, serviceName st
 	}
 
 	return tags.Tags, nil
+}
+
+func (c *Client) GetInvoiceIDs(ctx context.Context) (map[string]string, error) {
+	billingGroups, err := c.GetBillingGroups(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get billing groups %v", err)
+	}
+	ret := make(map[string]string)
+
+	for _, billingGroup := range billingGroups {
+		invoices, err := c.GetInvoices(ctx, billingGroup.BillingGroupId)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get invoices for billing group %s", billingGroup.BillingGroupId)
+		}
+		for _, invoice := range invoices {
+			ret[invoice.InvoiceId] = billingGroup.BillingGroupId
+		}
+	}
+	return ret, nil
 }

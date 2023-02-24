@@ -3,7 +3,6 @@ package bigquery
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net/http"
 
 	"cloud.google.com/go/bigquery"
@@ -15,10 +14,8 @@ import (
 )
 
 const (
-	ProjectID          = "nais-io"
-	Dataset            = "aiven_cost"
-	TableCurrencyRates = "currency_rates"
-	Table              = "costitems"
+	ProjectID = "nais-io"
+	Dataset   = "aiven_cost"
 )
 
 type Client struct {
@@ -37,8 +34,8 @@ func New(ctx context.Context) *Client {
 	}
 }
 
-func (c *Client) TruncateCurrencyTable(ctx context.Context) {
-	q := c.client.Query(`DELETE FROM ` + ProjectID + "." + Dataset + "." + TableCurrencyRates + ` WHERE 1=1`)
+func (c *Client) TruncateCurrencyTable(ctx context.Context, tableName string) {
+	q := c.client.Query(`DELETE FROM ` + ProjectID + "." + Dataset + "." + tableName + ` WHERE 1=1`)
 	it, err := q.Read(ctx)
 	if err != nil {
 		log.Errorf(err, "failed to truncate table")
@@ -57,25 +54,64 @@ func (c *Client) TruncateCurrencyTable(ctx context.Context) {
 	}
 }
 
-func (c *Client) CreateOrUpdateCurrencyRates(ctx context.Context, currencyRates []currency.CurrencyRate) error {
+func (c *Client) CreateIfNotExists(ctx context.Context, schema any, tableName string) error {
+	err := c.tableExists(ctx, ProjectID, Dataset, tableName)
+	if err != nil {
+		if err.Error() != "dataset or table not found" {
+			log.Errorf(err, "failed to check if table exists")
+			panic(err)
+		} else {
+			err := c.createTable(ctx, c.client.Dataset(Dataset), schema, tableName)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (c *Client) FetchCostItemIDandStatus(ctx context.Context, tableName string) (map[string]string, error) {
+	q := c.client.Query(`SELECT DISTINCT invoice_id, status FROM ` + ProjectID + "." + Dataset + "." + tableName)
+	it, err := q.Read(ctx)
+	if err != nil {
+		log.Errorf(err, "failed to fetch cost items")
+		panic(err)
+	}
+	costItems := make(map[string]string)
+	for {
+		var values []bigquery.Value
+		err := it.Next(&values)
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			log.Errorf(err, "failed to fetch cost items")
+			panic(err)
+		}
+		costItems[values[0].(string)] = values[1].(string)
+	}
+	return costItems, nil
+}
+
+func (c *Client) CreateOrUpdateCurrencyRates(ctx context.Context, currencyRates []currency.CurrencyRate, tableName string) error {
 	dataset := c.client.Dataset(Dataset)
-	err := c.tableExists(ctx, ProjectID, Dataset, TableCurrencyRates)
+	err := c.tableExists(ctx, ProjectID, Dataset, tableName)
 	if err != nil {
 		if err.Error() != "dataset or table not found" {
 			log.Errorf(err, "failed to check if table exists")
 			panic(err)
 		} else if err.Error() == "dataset or table not found" {
-			err := c.createTable(ctx, dataset)
+			err := c.createTable(ctx, dataset, currency.CurrencyRate{}, tableName)
 			if err != nil {
 				return err
 			}
 		} else {
-			c.TruncateCurrencyTable(ctx)
+			c.TruncateCurrencyTable(ctx, tableName)
 		}
 	}
-	c.client.Dataset(Dataset).Table(TableCurrencyRates)
+	c.client.Dataset(Dataset).Table(tableName)
 	for _, currencyRate := range currencyRates {
-		err = dataset.Table(TableCurrencyRates).Inserter().Put(ctx, currencyRate)
+		err = dataset.Table(tableName).Inserter().Put(ctx, currencyRate)
 		if err != nil {
 			log.Errorf(err, "failed to insert currency rate")
 			return err
@@ -84,14 +120,14 @@ func (c *Client) CreateOrUpdateCurrencyRates(ctx context.Context, currencyRates 
 	return nil
 }
 
-func (c *Client) createTable(ctx context.Context, dataset *bigquery.Dataset) error {
-	schema, err := bigquery.InferSchema(currency.CurrencyRate{})
+func (c *Client) createTable(ctx context.Context, dataset *bigquery.Dataset, schema any, tableName string) error {
+	s, err := bigquery.InferSchema(schema)
 	if err != nil {
 		log.Errorf(err, "failed to infer schema")
 		return err
 	}
 
-	if err := dataset.Table(TableCurrencyRates).Create(ctx, &bigquery.TableMetadata{Schema: schema}); err != nil {
+	if err := dataset.Table(tableName).Create(ctx, &bigquery.TableMetadata{Schema: s}); err != nil {
 		log.Errorf(err, "failed to create table")
 		return err
 	}
@@ -108,6 +144,5 @@ func (c *Client) tableExists(ctx context.Context, projectID, datasetID, tableID 
 			}
 		}
 	}
-	fmt.Println("Table found")
 	return nil
 }

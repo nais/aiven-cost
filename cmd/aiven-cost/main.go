@@ -11,14 +11,15 @@ import (
 	"github.com/nais/aiven-cost/aiven"
 	"github.com/nais/aiven-cost/bigquery"
 	"github.com/nais/aiven-cost/billing"
-	"github.com/nais/aiven-cost/currency"
 	"github.com/nais/aiven-cost/log"
 )
 
 var cfg = struct {
-	APIHost    string
-	LogLevel   string
-	AivenToken string
+	APIHost        string
+	LogLevel       string
+	AivenToken     string
+	CostItemsTable string
+	CurrencyTable  string
 }{
 	APIHost:    "api.aiven.io",
 	LogLevel:   "info",
@@ -31,6 +32,8 @@ func main() {
 	flag.StringVar(&cfg.APIHost, "api-host", cfg.APIHost, "API host")
 	flag.StringVar(&cfg.LogLevel, "log-level", "info", "which log level to output")
 	flag.StringVar(&cfg.AivenToken, "aiven-token", os.Getenv("AIVEN_TOKEN"), "Aiven API token")
+	flag.StringVar(&cfg.CostItemsTable, "cost-table", "cost_items", "Name of cost table in BigQuery")
+	flag.StringVar(&cfg.CurrencyTable, "currency-table", "currency_rates", "Name of currency table in BigQuery")
 	flag.Parse()
 	f, err := os.Create("aiven-cost.log")
 	if err != nil {
@@ -40,17 +43,65 @@ func main() {
 
 	aivenClient := aiven.New(cfg.APIHost, cfg.AivenToken)
 
-	currencyClient := currency.New()
-	currency, err := currencyClient.GetRates(ctx)
+	/*	currencyClient := currency.New()
+		currency, err := currencyClient.GetRates(ctx)
+		if err != nil {
+			log.Errorf(err, "failed to get currency rates")
+		}
+	*/
+	bqClient := bigquery.New(ctx)
+	err = bqClient.CreateIfNotExists(ctx, bigquery.Line{}, cfg.CostItemsTable)
 	if err != nil {
-		log.Errorf(err, "failed to get currency rates")
+		log.Errorf(err, "failed to create cost table")
+	}
+	bqInvoices, err := bqClient.FetchCostItemIDandStatus(ctx, cfg.CostItemsTable)
+	if err != nil {
+		log.Errorf(err, "failed to fetch cost item id and status")
+		panic(err)
+	}
+	// fetch aiven invoice ids
+	aivenInvoiceIDs, err := aivenClient.GetInvoiceIDs(ctx)
+	if err != nil {
+		log.Errorf(err, "failed to get invoice ids")
+		panic(err)
 	}
 
-	bqClient := bigquery.New(ctx)
-	err = bqClient.CreateOrUpdateCurrencyRates(ctx, currency)
-	if err != nil {
-		log.Errorf(err, "failed to create or update currency rates")
+	filterPayedInvoices := func(aivenInvoiceIDs, bqInvoices map[string]string) map[string]string {
+		unprocessedInvoices := make(map[string]string)
+		for invoiceID, billingGroup := range aivenInvoiceIDs {
+			if _, ok := bqInvoices[invoiceID]; ok && bqInvoices[invoiceID] == "paid" {
+				continue
+			}
+			unprocessedInvoices[invoiceID] = billingGroup
+		}
+		return unprocessedInvoices
 	}
+
+	// filter out payed invoices
+	unprocessedInvoices := filterPayedInvoices(aivenInvoiceIDs, bqInvoices)
+
+	// fetch invoice details for each invoice and map to bigquery schema
+	for invoiceID, billingGroup := range unprocessedInvoices {
+		invoiceDetails, err := aivenClient.GetInvoiceDetails(ctx, invoiceID, billingGroup)
+		if err != nil {
+			log.Errorf(err, "failed to get invoice details for invoice %s", invoiceID)
+			panic(err)
+		}
+		// map invoice details to bigquery schema
+		bqInvoice := mapInvoiceToBigQuery(invoiceDetails)
+		// insert invoice into bigquery
+		err = bqClient.InsertCostItem(ctx, bqInvoice, cfg.CostItemsTable)
+		if err != nil {
+			log.Errorf(err, "failed to insert cost item into bigquery")
+			panic(err)
+		}
+	}
+
+	/*	err = bqClient.CreateOrUpdateCurrencyRates(ctx, currency, "currency_rates")
+		if err != nil {
+			log.Errorf(err, "failed to create or update currency rates")
+		}
+	*/
 	billingGroups, err := aivenClient.GetBillingGroups(ctx)
 	if err != nil {
 		log.Errorf(err, "failed to get billing groups")
@@ -86,26 +137,16 @@ func main() {
 					tags.Team = "nais"
 				}
 
-				if invoiceDetail.LineType == "support_charge" && invoiceDetail.ServiceType == "" {
+				switch invoiceDetail.LineType {
+				case "support_charge":
+				case "extra_charge":
 					invoiceDetail.ServiceType = "support"
 					tags.Team = "nais"
-				} else if invoiceDetail.LineType == "credit_consumption" {
+				case "credit_consumption":
 					invoiceDetail.ServiceType = "credit"
 					tags.Team = "nais"
-				} else if invoiceDetail.LineType == "extra_charge" {
-					if invoiceDetail.Description == "Priority support" {
-						invoiceDetail.ServiceType = "priority_support"
-						tags.Team = "nais"
-					} else if strings.Contains(invoiceDetail.Description, "Missed DDS charges") {
-						invoiceDetail.ServiceType = "missed_dds_charges"
-						tags.Team = "nais"
-					} else {
-						// stupid to panic here, but we want to know about all the different extra charges
-						panic(fmt.Sprintf("unknown extra charge %#v", invoiceDetail))
-					}
-				} else if invoiceDetail.LineType != "service_charge" {
-					// stupid to panic here, but we want to know about all the different line types
-					panic(fmt.Sprintf("unknown line type %#v", invoiceDetail.LineType))
+				default:
+					invoiceDetail.ServiceType = invoiceDetail.LineType
 				}
 
 				billingReport := billing.AivenCostItem{

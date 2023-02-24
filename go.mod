@@ -5,6 +5,7 @@ go 1.20
 require (
 	cloud.google.com/go/bigquery v1.47.0
 	golang.org/x/exp v0.0.0-20230213192124-5e25df0256eb
+	google.golang.org/api v0.110.0
 )
 
 require (
@@ -41,7 +42,6 @@ require (
 	golang.org/x/text v0.7.0 // indirect
 	golang.org/x/tools v0.2.0 // indirect
 	golang.org/x/xerrors v0.0.0-20220907171357-04be3eba64a2 // indirect
-	google.golang.org/api v0.110.0 // indirect
 	google.golang.org/appengine v1.6.7 // indirect
 	google.golang.org/genproto v0.0.0-20230209215440-0dfe4f8abfcc // indirect
 	google.golang.org/grpc v1.53.0 // indirect

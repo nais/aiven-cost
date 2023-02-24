@@ -1,7 +1,10 @@
-invoiceId STRING NULLABLE
-environment STRING NULLABLE
-team STRING NULLABLE
-date DATE NULLABLE
-service STRING NULLABLE
-costInEuros BIGNUMERIC NULLABLE
-tenant STRING NULLABLE
+pseudo:
+
+Hent alle billing groups
+Hent alle invoices med id per group
+select id & status i BQ
+if bq.status != "paid" {
+hent invoiceLines
+bygg struct
+lagre i bq
+}
