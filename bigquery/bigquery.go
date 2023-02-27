@@ -70,7 +70,19 @@ func (c *Client) CreateIfNotExists(ctx context.Context, schema any, tableName st
 	return nil
 }
 
-func (c *Client) FetchCostItemIDandStatus(ctx context.Context, tableName string) (map[string]string, error) {
+func (c *Client) DeleteUnpaid(ctx context.Context, tableName string) error {
+	q := c.client.Query("DELETE FROM " + ProjectID + "." + Dataset + "." + tableName + " WHERE status in ('estimate', 'mailed')")
+	_, err := q.Read(ctx)
+	if err != nil {
+		log.Errorf(err, "failed to delete unpaid cost items")
+		panic(err)
+	}
+
+	return nil
+}
+
+func (c *Client) FetchCostItemIDAndStatus(ctx context.Context, tableName string) (map[string]string, error) {
+	log.Infof("query: %s", "SELECT DISTINCT invoice_id, status FROM "+ProjectID+"."+Dataset+"."+tableName)
 	q := c.client.Query(`SELECT DISTINCT invoice_id, status FROM ` + ProjectID + "." + Dataset + "." + tableName)
 	it, err := q.Read(ctx)
 	if err != nil {
@@ -116,6 +128,16 @@ func (c *Client) CreateOrUpdateCurrencyRates(ctx context.Context, currencyRates 
 			log.Errorf(err, "failed to insert currency rate")
 			return err
 		}
+	}
+	return nil
+}
+
+func (c *Client) InsertCostItems(ctx context.Context, lines []Line, tableName string) error {
+	// log.Infof("Inserting cost item for: %s", line.InvoiceId)
+	err := c.client.Dataset(Dataset).Table(tableName).Inserter().Put(ctx, lines)
+	if err != nil {
+		log.Errorf(err, "failed to insert cost item")
+		return err
 	}
 	return nil
 }

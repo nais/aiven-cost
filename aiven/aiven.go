@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/nais/aiven-cost/bigquery"
 	"github.com/nais/aiven-cost/log"
@@ -26,6 +27,7 @@ func New(apiHost, token string) *Client {
 }
 
 func (c *Client) do(ctx context.Context, v any, method, path string, body io.Reader) error {
+	log.Infof("do %s: %s", method, path)
 	req, err := http.NewRequestWithContext(ctx, method, "https://"+c.APIHost+path, body)
 	if err != nil {
 		return err
@@ -67,46 +69,81 @@ func (c *Client) GetInvoices(ctx context.Context, billingGroupId string) ([]Invo
 	return invoices.Invoices, nil
 }
 
-func parseServiceType(serviceType string) string {
-	switch serviceType {
-	case "support_charge":
-	case "extra_charge":
+func parseServiceType(line InvoiceLine) string {
+	switch line.LineType {
+	case "support_charge", "extra_charge":
 		return "support"
 	case "credit_consumption":
 		return "credit"
 	}
-	return serviceType
+	return line.ServiceType
 }
 
-func (c *Client) GetInvoiceDetails(ctx context.Context, billingGroupId, invoiceId string) ([]bigquery.Line, error) {
+func parseTenant(tenant string) string {
+	if tenant == "" {
+		return "nav"
+	}
+	return tenant
+}
+
+func parseTeam(team, serviceType string) string {
+	switch serviceType {
+	case "kafka", "support_charge", "extra_charge", "credit_consumption":
+		return "nais"
+	}
+	return team
+}
+
+func fetchServiceTags(serviceType string) bool {
+	switch serviceType {
+	case "support_charge", "extra_charge", "credit_consumption":
+		return false
+	}
+	return true
+}
+
+func (c *Client) GetInvoiceLines(ctx context.Context, billingGroupId string, invoice Invoice) ([]bigquery.Line, error) {
 	invoiceLines := struct {
 		InvoiceLines []InvoiceLine `json:"lines"`
 	}{}
 	ret := []bigquery.Line{}
 
-	if err := c.do(ctx, &invoiceLines, http.MethodGet, "/v1/billing-group/"+billingGroupId+"/invoice/"+invoiceId+"/lines", nil); err != nil {
+	if err := c.do(ctx, &invoiceLines, http.MethodGet, "/v1/billing-group/"+billingGroupId+"/invoice/"+invoice.InvoiceId+"/lines", nil); err != nil {
 		return nil, err
 	}
 
-	for _, invoiceDetail := range invoiceLines.InvoiceLines {
-		tags, err := c.GetServiceTags(ctx, invoiceDetail.ProjectName, invoiceDetail.ServiceName)
-		if err != nil {
-			log.Warnf("failed to get service tags for project %s and service %s: %v", invoiceDetail.ProjectName, invoiceDetail.ServiceName, err)
+	for _, line := range invoiceLines.InvoiceLines {
+		tags := Tags{}
+		if fetchServiceTags(line.ServiceType) {
+			t, err := c.GetServiceTags(ctx, line.ProjectName, line.ServiceName)
+			if err != nil {
+				log.Warnf("failed to get service tags for project %s and service %s: %v", line.ProjectName, line.ServiceName, err)
+			}
+			tags = t
 		}
+
 		ret = append(ret, bigquery.Line{
-			InvoiceId:   invoiceId,
-			Environment: tags.Environment,
-			Team:        tags.Team,
-			Service:     parseServiceType(invoiceDetail.ServiceType),
-			Tenant:      tags.Tenant,
-			Status:      invoiceDetail.Status,
-			Cost:        invoiceDetail.Cost,
-			Date:        invoiceDetail.Date,
+			InvoiceId:    invoice.InvoiceId,
+			ProjectName:  line.ProjectName,
+			Environment:  tags.Environment,
+			Team:         parseTeam(tags.Team, line.ServiceType),
+			Service:      parseServiceType(line),
+			ServiceName:  line.ServiceName,
+			Tenant:       parseTenant(tags.Tenant),
+			Status:       invoice.Status,
+			Cost:         line.Cost,
+			Currency:     line.Currency,
+			Date:         fmt.Sprintf("%02d-%02d", line.TimestampBegin.Year(), line.TimestampBegin.Month()),
+			NumberOfDays: daysIn(line.TimestampBegin.Month(), line.TimestampBegin.Year()),
 		})
 
 	}
 
 	return ret, nil
+}
+
+func daysIn(m time.Month, year int) int {
+	return time.Date(year, m+1, 0, 0, 0, 0, 0, time.UTC).Day()
 }
 
 func (c *Client) GetServiceTags(ctx context.Context, projectName, serviceName string) (Tags, error) {
@@ -137,4 +174,16 @@ func (c *Client) GetInvoiceIDs(ctx context.Context) (map[string]string, error) {
 		}
 	}
 	return ret, nil
+}
+
+func (c *Client) GetInvoice(ctx context.Context, billingGroupId, invoiceId string) (Invoice, error) {
+	invoice := struct {
+		Invoice Invoice `json:"invoice"`
+	}{}
+
+	if err := c.do(ctx, &invoice, http.MethodGet, "/v1/billing-group/"+billingGroupId+"/invoice/"+invoiceId, nil); err != nil {
+		return Invoice{}, err
+	}
+
+	return invoice.Invoice, nil
 }

@@ -2,8 +2,6 @@ package aiven
 
 import (
 	"time"
-
-	"cloud.google.com/go/bigquery"
 )
 
 type Tags struct {
@@ -38,7 +36,7 @@ type BillingGroup struct {
 	BillingCurrency  string `json:"billing_currency"`
 }
 
-func (i *InvoiceLine) Save() (map[string]bigquery.Value, string, error) {
+/*func (i *InvoiceLine) Save() (map[string]bigquery.Value, string, error) {
 	return map[string]bigquery.Value{
 		"timestamp_begin": i.TimestampBegin,
 		"timestamp_end":   i.TimestampEnd,
@@ -48,7 +46,7 @@ func (i *InvoiceLine) Save() (map[string]bigquery.Value, string, error) {
 		"service_type":    i.ServiceType,
 		"project_name":    i.ProjectName,
 		"line_type":       i.LineType,
-		"status":          i.Status,
-		"invoice_id":      i.InvoiceId,
+		//"status":          i.Status,
+		//"invoice_id":      i.InvoiceId,
 	}, "", nil
-}
+}*/
