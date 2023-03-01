@@ -7,23 +7,18 @@ import (
 
 	"cloud.google.com/go/bigquery"
 	"google.golang.org/api/googleapi"
-	"google.golang.org/api/iterator"
 
-	"github.com/nais/aiven-cost/currency"
+	"github.com/nais/aiven-cost/config"
 	"github.com/nais/aiven-cost/log"
-)
-
-const (
-	ProjectID = "nais-io"
-	Dataset   = "aiven_cost"
 )
 
 type Client struct {
 	client *bigquery.Client
+	cfg    *config.Config
 }
 
-func New(ctx context.Context) *Client {
-	client, err := bigquery.NewClient(ctx, ProjectID)
+func New(ctx context.Context, cfg *config.Config) *Client {
+	client, err := bigquery.NewClient(ctx, cfg.ProjectID)
 	if err != nil {
 		log.Errorf(err, "Failed to create client: %v")
 		panic(err)
@@ -31,37 +26,18 @@ func New(ctx context.Context) *Client {
 	defer client.Close()
 	return &Client{
 		client: client,
-	}
-}
-
-func (c *Client) TruncateCurrencyTable(ctx context.Context, tableName string) {
-	q := c.client.Query(`DELETE FROM ` + ProjectID + "." + Dataset + "." + tableName + ` WHERE 1=1`)
-	it, err := q.Read(ctx)
-	if err != nil {
-		log.Errorf(err, "failed to truncate table")
-		panic(err)
-	}
-	for {
-		var values []bigquery.Value
-		err := it.Next(&values)
-		if err == iterator.Done {
-			break
-		}
-		if err != nil {
-			log.Errorf(err, "failed to truncate table")
-			panic(err)
-		}
+		cfg:    cfg,
 	}
 }
 
 func (c *Client) CreateIfNotExists(ctx context.Context, schema any, tableName string) error {
-	err := c.tableExists(ctx, ProjectID, Dataset, tableName)
+	err := c.tableExists(ctx, tableName)
 	if err != nil {
 		if err.Error() != "dataset or table not found" {
 			log.Errorf(err, "failed to check if table exists")
 			panic(err)
 		} else {
-			err := c.createTable(ctx, c.client.Dataset(Dataset), schema, tableName)
+			err := c.createTable(ctx, schema, tableName)
 			if err != nil {
 				return err
 			}
@@ -70,86 +46,14 @@ func (c *Client) CreateIfNotExists(ctx context.Context, schema any, tableName st
 	return nil
 }
 
-func (c *Client) DeleteUnpaid(ctx context.Context, tableName string) error {
-	q := c.client.Query("DELETE FROM " + ProjectID + "." + Dataset + "." + tableName + " WHERE status in ('estimate', 'mailed')")
-	_, err := q.Read(ctx)
-	if err != nil {
-		log.Errorf(err, "failed to delete unpaid cost items")
-		panic(err)
-	}
-
-	return nil
-}
-
-func (c *Client) FetchCostItemIDAndStatus(ctx context.Context, tableName string) (map[string]string, error) {
-	log.Infof("query: %s", "SELECT DISTINCT invoice_id, status FROM "+ProjectID+"."+Dataset+"."+tableName)
-	q := c.client.Query(`SELECT DISTINCT invoice_id, status FROM ` + ProjectID + "." + Dataset + "." + tableName)
-	it, err := q.Read(ctx)
-	if err != nil {
-		log.Errorf(err, "failed to fetch cost items")
-		panic(err)
-	}
-	costItems := make(map[string]string)
-	for {
-		var values []bigquery.Value
-		err := it.Next(&values)
-		if err == iterator.Done {
-			break
-		}
-		if err != nil {
-			log.Errorf(err, "failed to fetch cost items")
-			panic(err)
-		}
-		costItems[values[0].(string)] = values[1].(string)
-	}
-	return costItems, nil
-}
-
-func (c *Client) CreateOrUpdateCurrencyRates(ctx context.Context, currencyRates []currency.CurrencyRate, tableName string) error {
-	dataset := c.client.Dataset(Dataset)
-	err := c.tableExists(ctx, ProjectID, Dataset, tableName)
-	if err != nil {
-		if err.Error() != "dataset or table not found" {
-			log.Errorf(err, "failed to check if table exists")
-			panic(err)
-		} else if err.Error() == "dataset or table not found" {
-			err := c.createTable(ctx, dataset, currency.CurrencyRate{}, tableName)
-			if err != nil {
-				return err
-			}
-		} else {
-			c.TruncateCurrencyTable(ctx, tableName)
-		}
-	}
-	c.client.Dataset(Dataset).Table(tableName)
-	for _, currencyRate := range currencyRates {
-		err = dataset.Table(tableName).Inserter().Put(ctx, currencyRate)
-		if err != nil {
-			log.Errorf(err, "failed to insert currency rate")
-			return err
-		}
-	}
-	return nil
-}
-
-func (c *Client) InsertCostItems(ctx context.Context, lines []Line, tableName string) error {
-	// log.Infof("Inserting cost item for: %s", line.InvoiceId)
-	err := c.client.Dataset(Dataset).Table(tableName).Inserter().Put(ctx, lines)
-	if err != nil {
-		log.Errorf(err, "failed to insert cost item")
-		return err
-	}
-	return nil
-}
-
-func (c *Client) createTable(ctx context.Context, dataset *bigquery.Dataset, schema any, tableName string) error {
+func (c *Client) createTable(ctx context.Context, schema any, tableName string) error {
 	s, err := bigquery.InferSchema(schema)
 	if err != nil {
 		log.Errorf(err, "failed to infer schema")
 		return err
 	}
 
-	if err := dataset.Table(tableName).Create(ctx, &bigquery.TableMetadata{Schema: s}); err != nil {
+	if err := c.client.Dataset(c.cfg.Dataset).Table(tableName).Create(ctx, &bigquery.TableMetadata{Schema: s}); err != nil {
 		log.Errorf(err, "failed to create table")
 		return err
 	}
@@ -157,8 +61,8 @@ func (c *Client) createTable(ctx context.Context, dataset *bigquery.Dataset, sch
 }
 
 // tableExists checks wheter a table exists on a given dataset.
-func (c *Client) tableExists(ctx context.Context, projectID, datasetID, tableID string) error {
-	tableRef := c.client.Dataset(datasetID).Table(tableID)
+func (c *Client) tableExists(ctx context.Context, tableName string) error {
+	tableRef := c.client.Dataset(c.cfg.Dataset).Table(tableName)
 	if _, err := tableRef.Metadata(ctx); err != nil {
 		if e, ok := err.(*googleapi.Error); ok {
 			if e.Code == http.StatusNotFound {

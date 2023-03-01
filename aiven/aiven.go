@@ -123,18 +123,19 @@ func (c *Client) GetInvoiceLines(ctx context.Context, billingGroupId string, inv
 		}
 
 		ret = append(ret, bigquery.Line{
-			InvoiceId:    invoice.InvoiceId,
-			ProjectName:  line.ProjectName,
-			Environment:  tags.Environment,
-			Team:         parseTeam(tags.Team, line.ServiceType),
-			Service:      parseServiceType(line),
-			ServiceName:  line.ServiceName,
-			Tenant:       parseTenant(tags.Tenant),
-			Status:       invoice.Status,
-			Cost:         line.Cost,
-			Currency:     line.Currency,
-			Date:         fmt.Sprintf("%02d-%02d", line.TimestampBegin.Year(), line.TimestampBegin.Month()),
-			NumberOfDays: daysIn(line.TimestampBegin.Month(), line.TimestampBegin.Year()),
+			BillingGroupId: billingGroupId,
+			InvoiceId:      invoice.InvoiceId,
+			ProjectName:    line.ProjectName,
+			Environment:    tags.Environment,
+			Team:           parseTeam(tags.Team, line.ServiceType),
+			Service:        parseServiceType(line),
+			ServiceName:    line.ServiceName,
+			Tenant:         parseTenant(tags.Tenant),
+			Status:         invoice.Status,
+			Cost:           line.Cost,
+			Currency:       line.Currency,
+			Date:           fmt.Sprintf("%02d-%02d", line.TimestampBegin.Year(), line.TimestampBegin.Month()),
+			NumberOfDays:   daysIn(line.TimestampBegin.Month(), line.TimestampBegin.Year()),
 		})
 
 	}

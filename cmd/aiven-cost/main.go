@@ -3,62 +3,93 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"os"
+	"strconv"
+	"time"
 
 	"github.com/nais/aiven-cost/aiven"
 	"github.com/nais/aiven-cost/bigquery"
+	"github.com/nais/aiven-cost/config"
+	"github.com/nais/aiven-cost/currency"
 	"github.com/nais/aiven-cost/log"
 )
 
-var cfg = struct {
-	APIHost        string
-	LogLevel       string
-	AivenToken     string
-	CostItemsTable string
-	CurrencyTable  string
-}{
-	APIHost:    "api.aiven.io",
-	LogLevel:   "info",
-	AivenToken: "",
-}
+
 
 func main() {
 	ctx := context.Background()
 
+	cfg := config.New()
+
 	flag.StringVar(&cfg.APIHost, "api-host", cfg.APIHost, "API host")
 	flag.StringVar(&cfg.LogLevel, "log-level", "info", "which log level to output")
 	flag.StringVar(&cfg.AivenToken, "aiven-token", os.Getenv("AIVEN_TOKEN"), "Aiven API token")
-	flag.StringVar(&cfg.CostItemsTable, "cost-table", "cost_items", "Name of cost table in BigQuery")
-	flag.StringVar(&cfg.CurrencyTable, "currency-table", "currency_rates", "Name of currency table in BigQuery")
+	flag.StringVar(&cfg.ApiKey, "apikey", os.Getenv("APIKEY"), "Currency API token")
 	flag.Parse()
-	f, err := os.Create("aiven-cost.log")
-	if err != nil {
-		panic(err)
-	}
-	defer f.Close()
+
+
 
 	aivenClient := aiven.New(cfg.APIHost, cfg.AivenToken)
 
-	/*	currencyClient := currency.New()
-		currency, err := currencyClient.GetRates(ctx)
+	bqClient := bigquery.New(ctx, cfg)
+
+	currencyClient := currency.New(cfg.ApiKey)
+
+	bqClient.CreateIfNotExists(ctx, bigquery.CurrencyRate{}, cfg.CurrencyTable)
+	oldestDate, err := bqClient.GetOldestDateFromCostItems(ctx)
+	if err != nil {
+		log.Errorf(err, "failed to get currency dates")
+	}
+	rates := []bigquery.CurrencyRate{}
+	last := false
+	for {
+		endDate := oldestDate.Add(time.Hour * 24 * 365)
+		if oldestDate.Add(time.Hour * 24 * 365).After(time.Now()) {
+			endDate = time.Now()
+			last = true
+		}
+
+		resp, err := currencyClient.RatesPeriod(ctx, "USD", "EUR,NOK", oldestDate, endDate)
 		if err != nil {
 			log.Errorf(err, "failed to get currency rates")
 		}
-	*/
-	bqClient := bigquery.New(ctx)
+
+		for date, rate := range resp.Rates {
+			rates = append(rates, bigquery.CurrencyRate{
+				Date:   date,
+				USDEUR: strconv.FormatFloat(rate.EUR, 'f', 6, 64),
+				USDNOK: strconv.FormatFloat(rate.NOK, 'f', 6, 64),
+			})
+		}
+
+		if last {
+			break
+		}
+		oldestDate = oldestDate.Add(time.Hour * 24 * 365)
+	}
+	for _, rate := range rates {
+		fmt.Printf("%#v\n", rate)
+		err := bqClient.InsertCurrencyRate(ctx, rate)
+		if err != nil {
+			log.Errorf(err, "failed to insert currency rate")
+			os.Exit(1)
+		}
+	}
+	os.Exit(0)
 	log.Infof("create bigquery table if not exists")
 	err = bqClient.CreateIfNotExists(ctx, bigquery.Line{}, cfg.CostItemsTable)
 	if err != nil {
 		log.Errorf(err, "failed to create cost table")
 	}
 	log.Infof("delete unpaid cost lines from bigquery")
-	err = bqClient.DeleteUnpaid(ctx, cfg.CostItemsTable)
+	err = bqClient.DeleteUnpaid(ctx)
 	if err != nil {
 		log.Errorf(err, "failed to delete unpaid cost lines")
-		panic(err)
+		os.Exit(1)
 	}
 	log.Infof("fetch cost item id and status from bigquery")
-	bqInvoices, err := bqClient.FetchCostItemIDAndStatus(ctx, cfg.CostItemsTable)
+	bqInvoices, err := bqClient.FetchCostItemIDAndStatus(ctx)
 	if err != nil {
 		log.Errorf(err, "failed to fetch cost item id and status")
 		panic(err)
@@ -89,26 +120,11 @@ func main() {
 			panic(err)
 		}
 
-		// insert invoice into bigquery
 		err = bqClient.InsertCostItems(ctx, invoiceLines, cfg.CostItemsTable)
 		if err != nil {
 			log.Errorf(err, "failed to insert cost item into bigquery")
 			panic(err)
 		}
-		/*for _, line := range invoiceLines {
-			err := bqClient.InsertCostItems(ctx, line, cfg.CostItemsTable)
-			retries := 0
-			for err != nil {
-				if retries > 5 {
-					log.Errorf(err, "failed to insert cost item into bigquery")
-					panic(err)
-				}
-				time.Sleep(time.Duration(retries) * time.Second * 5)
-				retries++
-				log.Errorf(err, "failed to insert cost item into bigquery. retrying...")
-				err = bqClient.InsertCostItems(ctx, line, cfg.CostItemsTable)
-			}
-		}*/
 	}
 }
 

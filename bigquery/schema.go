@@ -3,6 +3,7 @@ package bigquery
 import "cloud.google.com/go/bigquery"
 
 type Line struct {
+	BillingGroupId string `bigquery:"billing_group_id"`
 	InvoiceId    string `bigquery:"invoice_id"`
 	ProjectName  string `bigquery:"project_name"`
 	Environment  string `bigquery:"environment"`
@@ -19,6 +20,7 @@ type Line struct {
 
 func (l *Line) Save() (map[string]bigquery.Value, string, error) {
 	return map[string]bigquery.Value{
+		"billing_group_id": l.BillingGroupId,
 		"invoice_id":     l.InvoiceId,
 		"project_name":   l.ProjectName,
 		"environment":    l.Environment,
@@ -31,5 +33,20 @@ func (l *Line) Save() (map[string]bigquery.Value, string, error) {
 		"currency":       l.Currency,
 		"date":           l.Date,
 		"number_of_days": l.NumberOfDays,
+	}, "", nil
+}
+
+type CurrencyRate struct {
+	Date   string `bigquery:"date"`
+	USDEUR string `bigquery:"usdeur"`
+	USDNOK string `bigquery:"usdnok"`
+}
+
+// Save() (row map[string]Value, insertID string, err error)
+func (c *CurrencyRate) Save() (map[string]bigquery.Value, string, error) {
+	return map[string]bigquery.Value{
+		"date":   c.Date,
+		"usdeur": c.USDEUR,
+		"usdnok": c.USDNOK,
 	}, "", nil
 }
