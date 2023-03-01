@@ -1,7 +1,7 @@
 package config
 
 type Config struct {
-	APIHost        string
+	AivenAPI       string
 	LogLevel       string
 	AivenToken     string
 	CurrencyToken  string
@@ -13,7 +13,7 @@ type Config struct {
 
 func New() *Config {
 	cfg := &Config{
-		APIHost:        "api.aiven.io",
+		AivenAPI:       "api.aiven.io",
 		LogLevel:       "info",
 		CostItemsTable: "cost_items",
 		CurrencyTable:  "currency_rates",

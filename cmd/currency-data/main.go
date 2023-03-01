@@ -19,9 +19,7 @@ func main() {
 
 	cfg := config.New()
 
-	flag.StringVar(&cfg.APIHost, "api-host", cfg.APIHost, "API host")
 	flag.StringVar(&cfg.LogLevel, "log-level", "info", "which log level to output")
-	flag.StringVar(&cfg.AivenToken, "aiven-token", os.Getenv("AIVEN_TOKEN"), "Aiven API token")
 	flag.StringVar(&cfg.CurrencyToken, "currency-token", os.Getenv("CURRENCY_TOKEN"), "Currency API token")
 	flag.Parse()
 
@@ -29,21 +27,30 @@ func main() {
 	currencyClient := currency.New(cfg.CurrencyToken)
 
 	// TODO: Move to separate job, or move down in main
-	bqClient.CreateIfNotExists(ctx, bigquery.CurrencyRate{}, cfg.CurrencyTable)
-	oldestDate, err := bqClient.GetOldestDateFromCostItems(ctx)
+	err := bqClient.CreateIfNotExists(ctx, bigquery.CurrencyRate{}, cfg.CurrencyTable)
 	if err != nil {
-		log.Errorf(err, "failed to get currency dates")
+		panic(fmt.Errorf("failed creating cost table: %w", err))
 	}
+
+	fetchFrom := time.Date(2020, time.January, 1, 0, 0, 0, 0, time.UTC)
+	newestDate, err := bqClient.GetNewestDate(ctx)
+	if err != nil {
+		panic(fmt.Errorf("failed to get newest date: %w", err))
+	}
+	if !newestDate.IsZero() {
+		fetchFrom = newestDate
+	}
+
 	rates := []bigquery.CurrencyRate{}
 	last := false
 	for {
-		endDate := oldestDate.Add(time.Hour * 24 * 365)
-		if oldestDate.Add(time.Hour * 24 * 365).After(time.Now()) {
+		endDate := fetchFrom.Add(time.Hour * 24 * 365)
+		if fetchFrom.Add(time.Hour * 24 * 365).After(time.Now()) {
 			endDate = time.Now()
 			last = true
 		}
 
-		resp, err := currencyClient.RatesPeriod(ctx, "USD", "EUR,NOK", oldestDate, endDate)
+		resp, err := currencyClient.RatesPeriod(ctx, "USD", "EUR,NOK", fetchFrom, endDate)
 		if err != nil {
 			log.Errorf(err, "failed to get currency rates")
 		}
@@ -59,14 +66,11 @@ func main() {
 		if last {
 			break
 		}
-		oldestDate = oldestDate.Add(time.Hour * 24 * 365)
+		fetchFrom = fetchFrom.Add(time.Hour * 24 * 365)
 	}
-	for _, rate := range rates {
-		fmt.Printf("%#v\n", rate)
-		err := bqClient.InsertCurrencyRate(ctx, rate)
-		if err != nil {
-			log.Errorf(err, "failed to insert currency rate")
-			os.Exit(1)
-		}
+	err = bqClient.InsertCurrencyRates(ctx, rates)
+	if err != nil {
+		log.Errorf(err, "failed to insert currency rate")
+		os.Exit(1)
 	}
 }

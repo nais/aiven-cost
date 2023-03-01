@@ -2,7 +2,6 @@ package bigquery
 
 import (
 	"context"
-	"time"
 
 	"cloud.google.com/go/bigquery"
 	"github.com/nais/aiven-cost/log"
@@ -31,32 +30,6 @@ func (c *Client) FetchCostItemIDAndStatus(ctx context.Context) (map[string]strin
 		costItems[values[0].(string)] = values[1].(string)
 	}
 	return costItems, nil
-}
-
-func (c *Client) GetOldestDateFromCostItems(ctx context.Context) (time.Time, error) {
-	t := time.Time{}
-	q := c.client.Query("SELECT distinct date FROM " + c.cfg.ProjectID + "." + c.cfg.Dataset + "." + c.cfg.CostItemsTable + " ORDER BY date ASC LIMIT 1")
-	it, err := q.Read(ctx)
-	if err != nil {
-		return t, err
-	}
-
-	for {
-		var values []bigquery.Value
-		err := it.Next(&values)
-		if err == iterator.Done {
-			break
-		}
-		if err != nil {
-			return t, err
-		}
-		date, err := time.Parse("2006-01", values[0].(string))
-		if err != nil {
-			return t, err
-		}
-		t = date
-	}
-	return t, nil
 }
 
 func (c *Client) DeleteUnpaid(ctx context.Context) error {

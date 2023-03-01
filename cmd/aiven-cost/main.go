@@ -16,13 +16,13 @@ func main() {
 
 	cfg := config.New()
 
-	flag.StringVar(&cfg.APIHost, "api-host", cfg.APIHost, "API host")
+	flag.StringVar(&cfg.AivenAPI, "api-host", cfg.AivenAPI, "API host")
 	flag.StringVar(&cfg.LogLevel, "log-level", "info", "which log level to output")
 	flag.StringVar(&cfg.AivenToken, "aiven-token", os.Getenv("AIVEN_TOKEN"), "Aiven API token")
 	flag.StringVar(&cfg.CurrencyToken, "currency-token", os.Getenv("CURRENCY_TOKEN"), "Currency API token")
 	flag.Parse()
 
-	aivenClient := aiven.New(cfg.APIHost, cfg.AivenToken)
+	aivenClient := aiven.New(cfg.AivenAPI, cfg.AivenToken)
 
 	bqClient := bigquery.New(ctx, cfg)
 

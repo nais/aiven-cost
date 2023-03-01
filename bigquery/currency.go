@@ -2,11 +2,37 @@ package bigquery
 
 import (
 	"context"
+	"time"
 
 	"cloud.google.com/go/bigquery"
 	"github.com/nais/aiven-cost/log"
 	"google.golang.org/api/iterator"
 )
+
+func (c *Client) GetNewestDate(ctx context.Context) (time.Time, error) {
+	var date time.Time
+	q := c.client.Query("SELECT date FROM " + c.cfg.ProjectID + "." + c.cfg.Dataset + "." + c.cfg.CurrencyTable + " ORDER BY date DESC LIMIT 1")
+	it, err := q.Read(ctx)
+	if err != nil {
+		return date, err
+	}
+
+	for {
+		var values []bigquery.Value
+		err := it.Next(&values)
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			return date, err
+		}
+		date, err = time.Parse("2006-01-02", values[0].(string))
+		if err != nil {
+			return date, err
+		}
+	}
+	return date, nil
+}
 
 func (c *Client) GetCurrencyDates(ctx context.Context) ([]string, error) {
 	var dates []string
@@ -34,33 +60,11 @@ func (c *Client) GetCurrencyDates(ctx context.Context) ([]string, error) {
 	return dates, nil
 }
 
-func (c *Client) InsertCurrencyRate(ctx context.Context, rate CurrencyRate) error {
-	log.Infof("Inserting currency rate for: %s", rate.Date)
-
-	existingCurrencyRates, err := c.GetCurrencyDates(ctx)
-	if err != nil {
-		log.Errorf(err, "failed to get existing currency rates")
-		return err
-	}
-
-	if contains(existingCurrencyRates, rate.Date) {
-		log.Infof("Currency rate for %s already exists, skipping", rate.Date)
-		return nil
-	}
-
-	err = c.client.Dataset(c.cfg.Dataset).Table(c.cfg.CurrencyTable).Inserter().Put(ctx, rate)
+func (c *Client) InsertCurrencyRates(ctx context.Context, rates []CurrencyRate) error {
+	err := c.client.Dataset(c.cfg.Dataset).Table(c.cfg.CurrencyTable).Inserter().Put(ctx, rates)
 	if err != nil {
 		log.Errorf(err, "failed to insert currency rate")
 		return err
 	}
 	return nil
-}
-
-func contains(s []string, e string) bool {
-	for _, a := range s {
-		if a == e {
-			return true
-		}
-	}
-	return false
 }
