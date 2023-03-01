@@ -4,7 +4,7 @@ type Config struct {
 	APIHost        string
 	LogLevel       string
 	AivenToken     string
-	ApiKey         string
+	CurrencyToken  string
 	CostItemsTable string
 	CurrencyTable  string
 	ProjectID      string
