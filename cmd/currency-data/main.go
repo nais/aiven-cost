@@ -38,7 +38,7 @@ func main() {
 		panic(fmt.Errorf("failed to get newest date: %w", err))
 	}
 	if !newestDate.IsZero() {
-		fetchFrom = newestDate
+		fetchFrom = newestDate.Add(time.Hour * 24)
 	}
 
 	rates := []bigquery.CurrencyRate{}
