@@ -7,14 +7,11 @@ spec:
   concurrencyPolicy: Forbid
   failedJobsHistoryLimit: 1
   jobTemplate:
-    metadata:
-      creationTimestamp: null
     spec:
       template:
         metadata:
           annotations:
             prometheus.io/scrape: "false"
-          creationTimestamp: null
           labels:
             app: currency
           name: currency

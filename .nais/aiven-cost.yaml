@@ -7,14 +7,9 @@ spec:
   concurrencyPolicy: Forbid
   failedJobsHistoryLimit: 1
   jobTemplate:
-    metadata:
-      creationTimestamp: null
     spec:
       template:
         metadata:
-          annotations:
-            prometheus.io/scrape: "false"
-          creationTimestamp: null
           labels:
             app: aiven-cost
           name: aiven-cost
