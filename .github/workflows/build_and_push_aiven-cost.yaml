@@ -80,7 +80,9 @@ jobs:
       - name: deploy aiven-cost
         env:
           AIVEN_TOKEN: ${{ secrets.AIVEN_TOKEN }}
+          IMAGE_TAG: ${{ steps.metadata.outputs.tags[1] }}
         shell: bash
         run: |
-          kubectl create secret generic aiven-cost --from-literal=AIVEN_TOKEN=$AIVEN_TOKEN
+          echo $IMAGE_TAG
+          kubectl create secret generic aiven-cost --from-literal=AIVEN_TOKEN=$AIVEN_TOKEN --dry-run=client -o yaml | kubectl apply -f -
           kubectl apply -f ./.nais/aiven-cost.yaml

@@ -1,4 +1,4 @@
-name: Build and deploy currency image to GAR
+name: Build and deploy image to GAR
 on:
   push:
     branches:
@@ -80,7 +80,9 @@ jobs:
       - name: deploy currency
         env:
           AIVEN_TOKEN: ${{ secrets.AIVEN_TOKEN }}
+          IMAGE_TAG: ${{ steps.metadata.outputs.tags[1] }}
         shell: bash
         run: |
-          kubectl create secret generic currency --from-literal=CURRENCY_TOKEN=$CURRENCY_TOKEN
+          echo $IMAGE_TAG
+          kubectl create secret generic currency --from-literal=CURRENCY_TOKEN=$CURRENCY_TOKEN --dry-run=client -o yaml | kubectl apply -f -
           kubectl apply -f ./.nais/currency.yaml
