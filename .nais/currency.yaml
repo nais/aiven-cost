@@ -1,0 +1,53 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: currency
+  namespace: nais-system
+spec:
+  concurrencyPolicy: Forbid
+  failedJobsHistoryLimit: 1
+  jobTemplate:
+    metadata:
+      creationTimestamp: null
+    spec:
+      template:
+        metadata:
+          annotations:
+            prometheus.io/scrape: "false"
+          creationTimestamp: null
+          labels:
+            app: currency
+          name: currency
+        spec:
+          containers:
+          - image: europe-north1-docker.pkg.dev/nais-io/nais/images/currency:sha-f3d07b7
+            imagePullPolicy: Always
+            name: currency
+            envFrom:
+              - secretRef:
+                  name: currency
+            resources:
+              requests:
+                cpu: 250m
+                memory: 256Mi
+            securityContext:
+              allowPrivilegeEscalation: false
+              capabilities:
+                drop:
+                - ALL
+              readOnlyRootFilesystem: false
+              runAsNonRoot: true
+              runAsUser: 65532
+              seccompProfile:
+                type: RuntimeDefault
+            terminationMessagePath: /dev/termination-log
+            terminationMessagePolicy: File
+          dnsPolicy: ClusterFirst
+          restartPolicy: OnFailure
+          schedulerName: default-scheduler
+          serviceAccount: currency
+          serviceAccountName: currency
+          terminationGracePeriodSeconds: 30
+  schedule: 0 7 * * *
+  successfulJobsHistoryLimit: 1
+  suspend: false
