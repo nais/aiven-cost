@@ -15,7 +15,7 @@ RUN CGO_ENABLED=0 go build -a -o currencydata ./cmd/currency-data
 FROM alpine
 WORKDIR /
 
-COPY --from=builder /workspace/currency .
+COPY --from=builder /workspace/currencydata currency
 USER 65532:65532
 
-CMD ["/currencydata"]
+CMD ["/currency"]
