@@ -85,5 +85,5 @@ jobs:
         shell: bash
         run: |
           IMAGE_TAG=${GITHUB_SHA:0:7}
-          kubectl create secret generic currency --from-literal=CURRENCY_TOKEN=$CURRENCY_TOKEN --dry-run=client -o yaml | kubectl apply -f -
+          kubectl -n nais-system create secret generic currency --from-literal=CURRENCY_TOKEN=$CURRENCY_TOKEN --dry-run=client -o yaml | kubectl apply -f -
           sed "s|IMAGE_TAG|${IMAGE_TAG}|g" ./.nais/currency.yaml | kubectl apply -f -
