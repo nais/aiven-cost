@@ -1,4 +1,4 @@
-name: Build and deploy aiven-cost image to GAR
+name: Build, push and deploy aiven-cost
 on:
   push:
     branches:
@@ -9,6 +9,8 @@ env:
 
 jobs:
   build_and_push:
+    outputs:
+      tags: ${{ steps.metadata.outputs.tags }}
     permissions:
       contents: "read"
       id-token: "write"
@@ -80,9 +82,11 @@ jobs:
       - name: deploy aiven-cost
         env:
           AIVEN_TOKEN: ${{ secrets.AIVEN_TOKEN }}
-          IMAGE_TAG: ${{ steps.metadata.outputs.tags[1] }}
+          IMAGE_TAG: ${{ needs.build_and_push.outputs.tags[1] }}
+          IMAGE_TAGS: ${{ needs.build_and_push.outputs.tags }}
         shell: bash
         run: |
           echo $IMAGE_TAG
+          echo $IMAGE_TAGS
           kubectl create secret generic aiven-cost --from-literal=AIVEN_TOKEN=$AIVEN_TOKEN --dry-run=client -o yaml | kubectl apply -f -
           kubectl apply -f ./.nais/aiven-cost.yaml
