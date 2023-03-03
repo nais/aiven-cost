@@ -77,7 +77,7 @@ jobs:
         shell: bash
         run: |
           gcloud container clusters get-credentials nais-io --project nais-io --region europe-north1
-      - name: deploy fasit
+      - name: deploy currency
         env:
           AIVEN_TOKEN: ${{ secrets.AIVEN_TOKEN }}
         shell: bash

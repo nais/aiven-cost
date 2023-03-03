@@ -1,3 +1,13 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: currency
+  namespace: nais-system
+  labels:
+    app: currency
+  annotations:
+    iam.gke.io/gcp-service-account: currency-user@nais-io.iam.gserviceaccount.com
+---
 apiVersion: batch/v1
 kind: CronJob
 metadata:
