@@ -26,7 +26,6 @@ func main() {
 
 	bqClient := bigquery.New(ctx, cfg)
 
-	os.Exit(0)
 	log.Infof("create bigquery table if not exists")
 	err := bqClient.CreateIfNotExists(ctx, bigquery.Line{}, cfg.CostItemsTable)
 	if err != nil {
