@@ -1,13 +1,3 @@
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: currency
-  namespace: nais-system
-  labels:
-    app: currency
-  annotations:
-    iam.gke.io/gcp-service-account: currency-user@nais-io.iam.gserviceaccount.com
----
 apiVersion: batch/v1
 kind: CronJob
 metadata:
@@ -57,8 +47,8 @@ spec:
           dnsPolicy: ClusterFirst
           restartPolicy: OnFailure
           schedulerName: default-scheduler
-          serviceAccount: currency
-          serviceAccountName: currency
+          serviceAccount: aiven-cost
+          serviceAccountName: aiven-cost
           terminationGracePeriodSeconds: 30
   schedule: 0 5 * * *
   successfulJobsHistoryLimit: 1
