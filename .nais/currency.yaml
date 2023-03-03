@@ -27,7 +27,7 @@ spec:
           name: currency
         spec:
           containers:
-          - image: IMAGE_TAG
+          - image: europe-north1-docker.pkg.dev/nais-io/nais/images/currency:IMAGE_TAG
             imagePullPolicy: Always
             name: currency
             envFrom:

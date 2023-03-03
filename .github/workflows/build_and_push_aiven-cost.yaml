@@ -82,12 +82,8 @@ jobs:
       - name: deploy aiven-cost
         env:
           AIVEN_TOKEN: ${{ secrets.AIVEN_TOKEN }}
-          IMAGE_TAGS: ${{ needs.build_and_push.outputs.tags }}
         shell: bash
         run: |
-          for tag in $IMAGE_TAGS; do
-            echo "Tag: $tag"
-          done
-          IMAGE_TAG=$(echo $IMAGE_TAGS | tail -n 1)
+          IMAGE_TAG=${GITHUB_SHA:0:7}
           kubectl create secret generic aiven-cost --from-literal=AIVEN_TOKEN=$AIVEN_TOKEN --dry-run=client -o yaml | kubectl apply -f -
           sed "s|IMAGE_TAG|${IMAGE_TAG}|g" ./.nais/aiven-cost.yaml | kubectl apply -f -

@@ -81,10 +81,9 @@ jobs:
           gcloud container clusters get-credentials nais-io --project nais-io --region europe-north1
       - name: deploy currency
         env:
-          AIVEN_TOKEN: ${{ secrets.AIVEN_TOKEN }}
-          IMAGE_TAGS: ${{ needs.build_and_push.outputs.tags }}
+          CURRENCY_TOKEN: ${{ secrets.CURRENCY_TOKEN }}
         shell: bash
         run: |
-          IMAGE_TAG=$(echo $IMAGE_TAGS | tail -n 1)
+          IMAGE_TAG=${GITHUB_SHA:0:7}
           kubectl create secret generic currency --from-literal=CURRENCY_TOKEN=$CURRENCY_TOKEN --dry-run=client -o yaml | kubectl apply -f -
           sed "s|IMAGE_TAG|${IMAGE_TAG}|g" ./.nais/currency.yaml | kubectl apply -f -
