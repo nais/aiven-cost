@@ -25,7 +25,7 @@ spec:
           name: aiven-cost
         spec:
           containers:
-          - image: europe-north1-docker.pkg.dev/nais-io/nais/images/aiven-cost:IMAGE_TAG
+          - image: europe-north1-docker.pkg.dev/nais-io/nais/images/aiven-cost:sha-IMAGE_TAG
             imagePullPolicy: Always
             name: aiven-cost
             envFrom:
