@@ -60,6 +60,6 @@ spec:
           serviceAccount: currency
           serviceAccountName: currency
           terminationGracePeriodSeconds: 30
-  schedule: 0 7 * * *
+  schedule: 0 5 * * *
   successfulJobsHistoryLimit: 1
   suspend: false

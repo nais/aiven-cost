@@ -58,6 +58,6 @@ spec:
           serviceAccount: aiven-cost
           serviceAccountName: aiven-cost
           terminationGracePeriodSeconds: 30
-  schedule: 30 7 * * *
+  schedule: 30 5 * * *
   successfulJobsHistoryLimit: 1
   suspend: false
