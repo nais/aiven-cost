@@ -1,4 +1,4 @@
-name: Build and deploy image
+name: Build and deploy currency image to GAR
 on:
   push:
     branches:
@@ -46,7 +46,7 @@ jobs:
             type=semver,pattern=v{{major}}.{{minor}}
             type=semver,pattern=v{{major}}
             type=sha
-      - name: Build and push
+      - name: Build and push currency
         uses: docker/build-push-action@v4
         with:
           context: .
