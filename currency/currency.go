@@ -24,7 +24,6 @@ func New(apiToken string) *Client {
 }
 
 func (c *Client) do(ctx context.Context, v any, method, path string, body io.Reader) error {
-	fmt.Println(path)
 	req, err := http.NewRequestWithContext(ctx, method, path, body)
 	if err != nil {
 		return err
