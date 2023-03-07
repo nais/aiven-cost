@@ -23,7 +23,7 @@ func main() {
 	flag.StringVar(&cfg.CurrencyToken, "currency-token", os.Getenv("CURRENCY_TOKEN"), "Currency API token")
 	flag.Parse()
 
-	bqClient := bigquery.New(ctx, cfg)
+	bqClient := bigquery.New(ctx, cfg, "europe-north1")
 	currencyClient := currency.New(cfg.CurrencyToken)
 
 	// TODO: Move to separate job, or move down in main

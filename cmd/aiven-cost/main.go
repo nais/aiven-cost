@@ -24,7 +24,7 @@ func main() {
 
 	aivenClient := aiven.New(cfg.AivenAPI, cfg.AivenToken)
 
-	bqClient := bigquery.New(ctx, cfg)
+	bqClient := bigquery.New(ctx, cfg, "europe-north1")
 
 	log.Infof("create bigquery table if not exists")
 	err := bqClient.CreateIfNotExists(ctx, bigquery.Line{}, cfg.CostItemsTable)

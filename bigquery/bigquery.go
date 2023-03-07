@@ -17,13 +17,14 @@ type Client struct {
 	cfg    *config.Config
 }
 
-func New(ctx context.Context, cfg *config.Config) *Client {
+func New(ctx context.Context, cfg *config.Config, location string) *Client {
 	client, err := bigquery.NewClient(ctx, cfg.ProjectID)
 	if err != nil {
 		log.Errorf(err, "Failed to create client: %v")
 		panic(err)
 	}
 	defer client.Close()
+	client.Location = location
 	return &Client{
 		client: client,
 		cfg:    cfg,

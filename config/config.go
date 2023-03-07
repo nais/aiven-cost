@@ -18,7 +18,7 @@ func New() *Config {
 		CostItemsTable: "cost_items",
 		CurrencyTable:  "currency_rates",
 		ProjectID:      "nais-io",
-		Dataset:        "aiven_cost",
+		Dataset:        "aiven_cost_regional",
 	}
 	return cfg
 }
