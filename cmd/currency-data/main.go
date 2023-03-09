@@ -37,6 +37,7 @@ func main() {
 	if err != nil {
 		panic(fmt.Errorf("failed to get newest date: %w", err))
 	}
+
 	if !newestDate.IsZero() {
 		fetchFrom = newestDate.Add(time.Hour * 24)
 	}
@@ -45,7 +46,7 @@ func main() {
 	last := false
 	for {
 		endDate := fetchFrom.Add(time.Hour * 24 * 365)
-		if fetchFrom.Add(time.Hour * 24 * 365).After(time.Now()) {
+		if endDate.After(time.Now()) {
 			endDate = time.Now()
 			last = true
 		}
@@ -66,8 +67,9 @@ func main() {
 		if last {
 			break
 		}
-		fetchFrom = fetchFrom.Add(time.Hour * 24 * 365)
+		fetchFrom = endDate.Add(time.Hour * 24)
 	}
+
 	err = bqClient.InsertCurrencyRates(ctx, rates)
 	if err != nil {
 		log.Errorf(err, "failed to insert currency rate")
