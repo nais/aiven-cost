@@ -1,6 +1,6 @@
 .PHONY: local
 
-all: fmt build-aiven-cost build-currency-data check
+all: tidy fmt build-aiven-cost build-currency-data check
 
 build-aiven-cost:
 	GOOS=linux GOARCH=amd64 go build -o bin/aiven-cost ./cmd/aiven-cost/main.go
@@ -20,3 +20,6 @@ check:
 
 fmt:
 	go run mvdan.cc/gofumpt -w ./
+
+tidy:
+	go mod tidy
