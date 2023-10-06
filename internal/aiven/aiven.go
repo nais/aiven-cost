@@ -8,8 +8,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/nais/aiven-cost/bigquery"
-	"github.com/nais/aiven-cost/log"
+	"github.com/nais/aiven-cost/internal/bigquery"
+	"github.com/nais/aiven-cost/internal/log"
 )
 
 type Client struct {

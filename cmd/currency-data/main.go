@@ -8,10 +8,10 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/nais/aiven-cost/bigquery"
-	"github.com/nais/aiven-cost/config"
-	"github.com/nais/aiven-cost/currency"
-	"github.com/nais/aiven-cost/log"
+	"github.com/nais/aiven-cost/internal/bigquery"
+	"github.com/nais/aiven-cost/internal/config"
+	"github.com/nais/aiven-cost/internal/currency"
+	"github.com/nais/aiven-cost/internal/log"
 )
 
 func main() {
