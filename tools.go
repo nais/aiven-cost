@@ -4,5 +4,6 @@
 package tools
 
 import (
+	_ "honnef.co/go/tools/cmd/staticcheck"
 	_ "mvdan.cc/gofumpt"
 )
