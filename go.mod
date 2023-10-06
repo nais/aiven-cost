@@ -1,10 +1,11 @@
 module github.com/nais/aiven-cost
 
-go 1.20
+go 1.21
 
 require (
 	cloud.google.com/go/bigquery v1.47.0
 	golang.org/x/exp v0.0.0-20230213192124-5e25df0256eb
+	golang.org/x/vuln v1.0.1
 	google.golang.org/api v0.110.0
 	honnef.co/go/tools v0.4.6
 	mvdan.cc/gofumpt v0.5.0
