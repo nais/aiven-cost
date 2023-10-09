@@ -8,8 +8,8 @@ import (
 	"cloud.google.com/go/bigquery"
 	"google.golang.org/api/googleapi"
 
-	"github.com/nais/aiven-cost/config"
-	"github.com/nais/aiven-cost/log"
+	"github.com/nais/aiven-cost/internal/config"
+	"github.com/nais/aiven-cost/internal/log"
 )
 
 type Client struct {

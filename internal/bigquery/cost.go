@@ -4,7 +4,7 @@ import (
 	"context"
 
 	"cloud.google.com/go/bigquery"
-	"github.com/nais/aiven-cost/log"
+	"github.com/nais/aiven-cost/internal/log"
 	"google.golang.org/api/iterator"
 )
 

@@ -1,2 +1,4 @@
 .env
 aiven-cost.log
+/.idea
+/bin
