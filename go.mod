@@ -4,7 +4,8 @@ go 1.21
 
 require (
 	cloud.google.com/go/bigquery v1.56.0
-	golang.org/x/exp v0.0.0-20231006140011-7918f672742d
+	github.com/kelseyhightower/envconfig v1.4.0
+	github.com/sirupsen/logrus v1.9.3
 	golang.org/x/vuln v1.0.1
 	google.golang.org/api v0.147.0
 	honnef.co/go/tools v0.4.6
@@ -39,6 +40,7 @@ require (
 	github.com/zeebo/xxh3 v1.0.2 // indirect
 	go.opencensus.io v0.24.0 // indirect
 	golang.org/x/crypto v0.14.0 // indirect
+	golang.org/x/exp v0.0.0-20231006140011-7918f672742d // indirect
 	golang.org/x/exp/typeparams v0.0.0-20221208152030-732eee02a75a // indirect
 	golang.org/x/mod v0.13.0 // indirect
 	golang.org/x/net v0.17.0 // indirect

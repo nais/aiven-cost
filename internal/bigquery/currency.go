@@ -2,16 +2,17 @@ package bigquery
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"time"
 
 	"cloud.google.com/go/bigquery"
-	"github.com/nais/aiven-cost/internal/log"
 	"google.golang.org/api/iterator"
 )
 
 func (c *Client) GetNewestDate(ctx context.Context) (time.Time, error) {
 	var date time.Time
-	q := c.client.Query("SELECT date FROM " + c.cfg.ProjectID + "." + c.cfg.Dataset + "." + c.cfg.CurrencyTable + " ORDER BY date DESC LIMIT 1")
+	q := c.client.Query("SELECT date FROM " + c.client.Project() + "." + c.dataset + "." + c.currencyTable + " ORDER BY date DESC LIMIT 1")
 	it, err := q.Read(ctx)
 	if err != nil {
 		return date, err
@@ -20,12 +21,13 @@ func (c *Client) GetNewestDate(ctx context.Context) (time.Time, error) {
 	for {
 		var values []bigquery.Value
 		err := it.Next(&values)
-		if err == iterator.Done {
+		if errors.Is(err, iterator.Done) {
 			break
 		}
 		if err != nil {
 			return date, err
 		}
+
 		date, err = time.Parse("2006-01-02", values[0].(string))
 		if err != nil {
 			return date, err
@@ -36,7 +38,7 @@ func (c *Client) GetNewestDate(ctx context.Context) (time.Time, error) {
 
 func (c *Client) GetCurrencyDates(ctx context.Context) ([]string, error) {
 	var dates []string
-	q := c.client.Query("SELECT date FROM " + c.cfg.ProjectID + "." + c.cfg.Dataset + "." + c.cfg.CurrencyTable + " ORDER BY date ASC")
+	q := c.client.Query("SELECT date FROM " + c.client.Project() + "." + c.dataset + "." + c.currencyTable + " ORDER BY date ASC")
 	it, err := q.Read(ctx)
 	if err != nil {
 		return dates, err
@@ -61,10 +63,9 @@ func (c *Client) GetCurrencyDates(ctx context.Context) ([]string, error) {
 }
 
 func (c *Client) InsertCurrencyRates(ctx context.Context, rates []CurrencyRate) error {
-	err := c.client.Dataset(c.cfg.Dataset).Table(c.cfg.CurrencyTable).Inserter().Put(ctx, rates)
+	err := c.client.Dataset(c.dataset).Table(c.currencyTable).Inserter().Put(ctx, rates)
 	if err != nil {
-		log.Errorf(err, "failed to insert currency rate")
-		return err
+		return fmt.Errorf("failed to insert currency rate: %w", err)
 	}
 	return nil
 }

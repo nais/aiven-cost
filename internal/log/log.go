@@ -2,18 +2,33 @@ package log
 
 import (
 	"fmt"
+	"time"
 
-	"golang.org/x/exp/slog"
+	"github.com/sirupsen/logrus"
 )
 
-func Infof(format string, args ...any) {
-	slog.Default().Info(fmt.Sprintf(format, args...))
-}
+func New(format, level string) (*logrus.Logger, error) {
+	log := logrus.StandardLogger()
 
-func Errorf(err error, format string, args ...any) {
-	slog.Default().Error(fmt.Sprintf(format, args...), err)
-}
+	switch format {
+	case "json":
+		log.SetFormatter(&logrus.JSONFormatter{
+			TimestampFormat: time.RFC3339Nano,
+		})
+	case "text":
+		log.SetFormatter(&logrus.TextFormatter{
+			TimestampFormat: time.RFC3339Nano,
+		})
+	default:
+		return nil, fmt.Errorf("invalid log format: %s", format)
+	}
 
-func Warnf(format string, args ...any) {
-	slog.Default().Warn(fmt.Sprintf(format, args...))
+	lvl, err := logrus.ParseLevel(level)
+	if err != nil {
+		return nil, err
+	}
+
+	log.SetLevel(lvl)
+
+	return log, nil
 }

@@ -2,74 +2,75 @@ package bigquery
 
 import (
 	"context"
-	"errors"
+	"fmt"
 	"net/http"
 
 	"cloud.google.com/go/bigquery"
 	"google.golang.org/api/googleapi"
+)
 
-	"github.com/nais/aiven-cost/internal/config"
-	"github.com/nais/aiven-cost/internal/log"
+const (
+	gcpLocation = "europe-north1"
 )
 
 type Client struct {
-	client *bigquery.Client
-	cfg    *config.Config
+	client         *bigquery.Client
+	dataset        string
+	costItemsTable string
+	currencyTable  string
 }
 
-func New(ctx context.Context, cfg *config.Config, location string) *Client {
-	client, err := bigquery.NewClient(ctx, cfg.ProjectID)
+func New(ctx context.Context, projectID, dataset, costItemsTable, currencyTable string) (*Client, error) {
+	client, err := bigquery.NewClient(ctx, projectID)
 	if err != nil {
-		log.Errorf(err, "Failed to create client: %v")
-		panic(err)
+		return nil, err
 	}
-	defer client.Close()
-	client.Location = location
+	client.Location = gcpLocation
 	return &Client{
-		client: client,
-		cfg:    cfg,
-	}
+		client:         client,
+		dataset:        dataset,
+		costItemsTable: costItemsTable,
+		currencyTable:  currencyTable,
+	}, nil
 }
 
-func (c *Client) CreateIfNotExists(ctx context.Context, schema any, tableName string) error {
-	err := c.tableExists(ctx, tableName)
-	if err != nil {
+func (c *Client) CreateTableIfNotExists(ctx context.Context, schema any, tableName string) error {
+	if err := c.tableExists(ctx, tableName); err != nil {
 		if err.Error() != "dataset or table not found" {
-			log.Errorf(err, "failed to check if table exists")
-			panic(err)
-		} else {
-			err := c.createTable(ctx, schema, tableName)
-			if err != nil {
-				return err
-			}
+			return fmt.Errorf("failed to check if table exists: %w", err)
 		}
 	}
+
+	if err := c.createTable(ctx, schema, tableName); err != nil {
+		return err
+	}
+
 	return nil
 }
 
 func (c *Client) createTable(ctx context.Context, schema any, tableName string) error {
 	s, err := bigquery.InferSchema(schema)
 	if err != nil {
-		log.Errorf(err, "failed to infer schema")
-		return err
+		return fmt.Errorf("failed to infer schema: %w", err)
 	}
 
-	if err := c.client.Dataset(c.cfg.Dataset).Table(tableName).Create(ctx, &bigquery.TableMetadata{Schema: s}); err != nil {
-		log.Errorf(err, "failed to create table")
-		return err
+	if err := c.client.Dataset(c.dataset).Table(tableName).Create(ctx, &bigquery.TableMetadata{Schema: s}); err != nil {
+		return fmt.Errorf("failed to create table: %w", err)
 	}
+
 	return nil
 }
 
 // tableExists checks wheter a table exists on a given dataset.
 func (c *Client) tableExists(ctx context.Context, tableName string) error {
-	tableRef := c.client.Dataset(c.cfg.Dataset).Table(tableName)
+	tableRef := c.client.Dataset(c.dataset).Table(tableName)
 	if _, err := tableRef.Metadata(ctx); err != nil {
 		if e, ok := err.(*googleapi.Error); ok {
 			if e.Code == http.StatusNotFound {
-				return errors.New("dataset or table not found")
+				return fmt.Errorf("dataset or table not found")
 			}
 		}
 	}
+
 	return nil
 }

@@ -2,30 +2,28 @@ package bigquery
 
 import (
 	"context"
+	"errors"
+	"fmt"
 
 	"cloud.google.com/go/bigquery"
-	"github.com/nais/aiven-cost/internal/log"
 	"google.golang.org/api/iterator"
 )
 
 func (c *Client) FetchCostItemIDAndStatus(ctx context.Context) (map[string]string, error) {
-	log.Infof("query: %s", "SELECT DISTINCT invoice_id, status FROM "+c.cfg.ProjectID+"."+c.cfg.Dataset+"."+c.cfg.CostItemsTable)
-	q := c.client.Query(`SELECT DISTINCT invoice_id, status FROM ` + c.cfg.ProjectID + "." + c.cfg.Dataset + "." + c.cfg.CostItemsTable)
+	q := c.client.Query(`SELECT DISTINCT invoice_id, status FROM ` + c.client.Project() + "." + c.dataset + "." + c.costItemsTable)
 	it, err := q.Read(ctx)
 	if err != nil {
-		log.Errorf(err, "failed to fetch cost items")
-		panic(err)
+		return nil, fmt.Errorf("failed to fetch cost items: %w", err)
 	}
 	costItems := make(map[string]string)
 	for {
 		var values []bigquery.Value
 		err := it.Next(&values)
-		if err == iterator.Done {
+		if errors.Is(err, iterator.Done) {
 			break
 		}
 		if err != nil {
-			log.Errorf(err, "failed to fetch cost items")
-			panic(err)
+			return nil, fmt.Errorf("failed to fetch cost items: %w", err)
 		}
 		costItems[values[0].(string)] = values[1].(string)
 	}
@@ -33,22 +31,17 @@ func (c *Client) FetchCostItemIDAndStatus(ctx context.Context) (map[string]strin
 }
 
 func (c *Client) DeleteUnpaid(ctx context.Context) error {
-	q := c.client.Query("DELETE FROM " + c.cfg.ProjectID + "." + c.cfg.Dataset + "." + c.cfg.CostItemsTable + " WHERE status in ('estimate', 'mailed')")
-	_, err := q.Read(ctx)
-	if err != nil {
-		log.Errorf(err, "failed to delete unpaid cost items")
-		panic(err)
+	q := c.client.Query("DELETE FROM " + c.client.Project() + "." + c.dataset + "." + c.costItemsTable + " WHERE status in ('estimate', 'mailed')")
+	if _, err := q.Read(ctx); err != nil {
+		return fmt.Errorf("failed to delete unpaid cost items: %w", err)
 	}
-
 	return nil
 }
 
-func (c *Client) InsertCostItems(ctx context.Context, lines []Line, tableName string) error {
-	// log.Infof("Inserting cost item for: %s", line.InvoiceId)
-	err := c.client.Dataset(c.cfg.Dataset).Table(c.cfg.CostItemsTable).Inserter().Put(ctx, lines)
+func (c *Client) InsertCostItems(ctx context.Context, lines []Line) error {
+	err := c.client.Dataset(c.dataset).Table(c.costItemsTable).Inserter().Put(ctx, lines)
 	if err != nil {
-		log.Errorf(err, "failed to insert cost item")
-		return err
+		return fmt.Errorf("failed to insert cost item: %w", err)
 	}
 	return nil
 }

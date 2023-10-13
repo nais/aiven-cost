@@ -2,82 +2,102 @@ package main
 
 import (
 	"context"
-	"flag"
+	"fmt"
 	"os"
 
 	"github.com/nais/aiven-cost/internal/aiven"
 	"github.com/nais/aiven-cost/internal/bigquery"
 	"github.com/nais/aiven-cost/internal/config"
 	"github.com/nais/aiven-cost/internal/log"
+	"github.com/sirupsen/logrus"
+)
+
+const (
+	exitCodeOK = iota
+	exitCodeConfigError
+	exitCodeLoggerError
+	exitCodeRunError
 )
 
 func main() {
+	cfg, err := config.New()
+	if err != nil {
+		fmt.Println("failed to create config")
+		os.Exit(exitCodeConfigError)
+	}
+
+	logger, err := log.New(cfg.Log.Format, cfg.Log.Level)
+	if err != nil {
+		fmt.Println("unable to create logger")
+		os.Exit(exitCodeLoggerError)
+	}
+
+	err = run(cfg, logger)
+	if err != nil {
+		logger.WithError(err).Errorf("error in run()")
+		os.Exit(exitCodeRunError)
+	}
+
+	os.Exit(exitCodeOK)
+}
+
+func run(cfg *config.Config, logger *logrus.Logger) error {
 	ctx := context.Background()
 
-	cfg := config.New()
-
-	flag.StringVar(&cfg.AivenAPI, "api-host", cfg.AivenAPI, "API host")
-	flag.StringVar(&cfg.LogLevel, "log-level", "info", "which log level to output")
-	flag.StringVar(&cfg.AivenToken, "aiven-token", os.Getenv("AIVEN_TOKEN"), "Aiven API token")
-	flag.StringVar(&cfg.CurrencyToken, "currency-token", os.Getenv("CURRENCY_TOKEN"), "Currency API token")
-	flag.Parse()
-
-	aivenClient := aiven.New(cfg.AivenAPI, cfg.AivenToken)
-
-	bqClient := bigquery.New(ctx, cfg, "europe-north1")
-
-	log.Infof("create bigquery table if not exists")
-	err := bqClient.CreateIfNotExists(ctx, bigquery.Line{}, cfg.CostItemsTable)
+	aivenClient := aiven.New(cfg.Aiven.ApiHost, cfg.Aiven.Token, logger)
+	bqClient, err := bigquery.New(ctx, cfg.BigQuery.ProjectID, cfg.BigQuery.Dataset, cfg.BigQuery.CostItemsTable, cfg.BigQuery.CurrencyTable)
 	if err != nil {
-		log.Errorf(err, "failed to create cost table")
+		return fmt.Errorf("failed to create bigquery client: %w", err)
 	}
-	log.Infof("delete unpaid cost lines from bigquery")
+
+	logger.Infof("create bigquery table if not exists")
+	err = bqClient.CreateTableIfNotExists(ctx, bigquery.Line{}, cfg.BigQuery.CostItemsTable)
+	if err != nil {
+		return fmt.Errorf("failed to create cost table: %w", err)
+	}
+
+	logger.Infof("delete unpaid cost lines from bigquery")
 	err = bqClient.DeleteUnpaid(ctx)
 	if err != nil {
-		log.Errorf(err, "failed to delete unpaid cost lines")
-		os.Exit(1)
+		return fmt.Errorf("failed to delete unpaid cost lines: %w", err)
 	}
-	log.Infof("fetch cost item id and status from bigquery")
+
+	logger.Infof("fetch cost item id and status from bigquery")
 	bqInvoices, err := bqClient.FetchCostItemIDAndStatus(ctx)
 	if err != nil {
-		log.Errorf(err, "failed to fetch cost item id and status")
-		panic(err)
+		return fmt.Errorf("failed to fetch cost item id and status: %w", err)
 	}
-	// fetch aiven invoice ids
-	log.Infof("fetch aiven invoice ids")
+
+	logger.Infof("fetch aiven invoice ids")
 	aivenInvoiceIDs, err := aivenClient.GetInvoiceIDs(ctx)
 	if err != nil {
-		log.Errorf(err, "failed to get invoice ids")
-		panic(err)
+		return fmt.Errorf("failed to get invoice ids: %w", err)
 	}
-	log.Infof("filter out payed invoices")
-	// filter out payed invoices
-	unprocessedInvoices := filterPayedInvoices(aivenInvoiceIDs, bqInvoices)
 
-	log.Infof("fetch invoice details from aiven and insert into bigquery for %d invoices of a total of %d", len(unprocessedInvoices), len(aivenInvoiceIDs))
-	// fetch invoice details for each invoice and map to bigquery schema
+	logger.Infof("filter out paid invoices")
+	unprocessedInvoices := filterPaidInvoices(aivenInvoiceIDs, bqInvoices)
+	logger.Infof("fetch invoice details from aiven and insert into bigquery for %d invoices of a total of %d", len(unprocessedInvoices), len(aivenInvoiceIDs))
 	for invoiceID, billingGroup := range unprocessedInvoices {
 		invoice, err := aivenClient.GetInvoice(ctx, billingGroup, invoiceID)
 		if err != nil {
-			log.Errorf(err, "failed to get invoice for invoice %s", invoiceID)
-			panic(err)
+			return fmt.Errorf("failed to get invoice for invoice %s: %w", invoiceID, err)
 		}
 
 		invoiceLines, err := aivenClient.GetInvoiceLines(ctx, billingGroup, invoice)
 		if err != nil {
-			log.Errorf(err, "failed to get invoice details for invoice %s", invoiceID)
-			panic(err)
+			return fmt.Errorf("failed to get invoice details for invoice %s: %w", invoiceID, err)
 		}
 
-		err = bqClient.InsertCostItems(ctx, invoiceLines, cfg.CostItemsTable)
+		err = bqClient.InsertCostItems(ctx, invoiceLines)
 		if err != nil {
-			log.Errorf(err, "failed to insert cost item into bigquery")
-			panic(err)
+			return fmt.Errorf("failed to insert cost item into bigquery: %w", err)
 		}
 	}
+
+	return nil
 }
 
-func filterPayedInvoices(aivenInvoiceIDs, bqInvoices map[string]string) map[string]string {
+func filterPaidInvoices(aivenInvoiceIDs, bqInvoices map[string]string) map[string]string {
 	unprocessedInvoices := make(map[string]string)
 	for invoiceID, billingGroup := range aivenInvoiceIDs {
 		if _, ok := bqInvoices[invoiceID]; ok && bqInvoices[invoiceID] == "paid" {

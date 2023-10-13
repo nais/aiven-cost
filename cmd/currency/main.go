@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"os"
 	"strconv"
@@ -14,28 +13,55 @@ import (
 	"github.com/nais/aiven-cost/internal/log"
 )
 
+const (
+	exitCodeOK = iota
+	exitCodeConfigError
+	exitCodeLoggerError
+	exitCodeRunError
+)
+
 func main() {
+	cfg, err := config.New()
+	if err != nil {
+		fmt.Println("failed to create config")
+		os.Exit(exitCodeConfigError)
+	}
+
+	logger, err := log.New(cfg.Log.Format, cfg.Log.Level)
+	if err != nil {
+		fmt.Println("unable to create logger")
+		os.Exit(exitCodeLoggerError)
+	}
+
+	err = run(cfg)
+	if err != nil {
+		logger.WithError(err).Error("error in run()")
+		os.Exit(exitCodeRunError)
+	}
+
+	os.Exit(exitCodeOK)
+}
+
+func run(cfg *config.Config) error {
 	ctx := context.Background()
 
-	cfg := config.New()
+	bqClient, err := bigquery.New(ctx, cfg.BigQuery.ProjectID, cfg.BigQuery.Dataset, cfg.BigQuery.CostItemsTable, cfg.BigQuery.CurrencyTable)
+	if err != nil {
+		return fmt.Errorf("failed to create bigquery client: %w", err)
+	}
 
-	flag.StringVar(&cfg.LogLevel, "log-level", "info", "which log level to output")
-	flag.StringVar(&cfg.CurrencyToken, "currency-token", os.Getenv("CURRENCY_TOKEN"), "Currency API token")
-	flag.Parse()
-
-	bqClient := bigquery.New(ctx, cfg, "europe-north1")
-	currencyClient := currency.New(cfg.CurrencyToken)
+	currencyClient := currency.New(cfg.Currency.Token)
 
 	// TODO: Move to separate job, or move down in main
-	err := bqClient.CreateIfNotExists(ctx, bigquery.CurrencyRate{}, cfg.CurrencyTable)
+	err = bqClient.CreateTableIfNotExists(ctx, bigquery.CurrencyRate{}, cfg.BigQuery.CurrencyTable)
 	if err != nil {
-		panic(fmt.Errorf("failed creating cost table: %w", err))
+		return fmt.Errorf("failed creating cost table: %w", err)
 	}
 
 	fetchFrom := time.Date(2020, time.January, 1, 0, 0, 0, 0, time.UTC)
 	newestDate, err := bqClient.GetNewestDate(ctx)
 	if err != nil {
-		panic(fmt.Errorf("failed to get newest date: %w", err))
+		return fmt.Errorf("failed to get newest date: %w", err)
 	}
 
 	if !newestDate.IsZero() {
@@ -53,7 +79,7 @@ func main() {
 
 		resp, err := currencyClient.RatesPeriod(ctx, "USD", "EUR,NOK", fetchFrom, endDate)
 		if err != nil {
-			log.Errorf(err, "failed to get currency rates")
+			return fmt.Errorf("failed to get currency rates: %w", err)
 		}
 
 		for date, rate := range resp.Rates {
@@ -72,7 +98,8 @@ func main() {
 
 	err = bqClient.InsertCurrencyRates(ctx, rates)
 	if err != nil {
-		log.Errorf(err, "failed to insert currency rate")
-		os.Exit(1)
+		return fmt.Errorf("failed to insert currency rate: %w", err)
 	}
+
+	return nil
 }

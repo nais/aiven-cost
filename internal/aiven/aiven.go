@@ -9,30 +9,31 @@ import (
 	"time"
 
 	"github.com/nais/aiven-cost/internal/bigquery"
-	"github.com/nais/aiven-cost/internal/log"
+	"github.com/sirupsen/logrus"
 )
 
 type Client struct {
-	client  *http.Client
-	APIHost string
-	Token   string
+	client   *http.Client
+	apiHost  string
+	apiToken string
+	logger   *logrus.Logger
 }
 
-func New(apiHost, token string) *Client {
+func New(apiHost, token string, logger *logrus.Logger) *Client {
 	return &Client{
-		client:  http.DefaultClient,
-		APIHost: apiHost,
-		Token:   token,
+		client:   http.DefaultClient,
+		apiHost:  apiHost,
+		apiToken: token,
+		logger:   logger,
 	}
 }
 
 func (c *Client) do(ctx context.Context, v any, method, path string, body io.Reader) error {
-	log.Infof("do %s: %s", method, path)
-	req, err := http.NewRequestWithContext(ctx, method, "https://"+c.APIHost+path, body)
+	req, err := http.NewRequestWithContext(ctx, method, "https://"+c.apiHost+path, body)
 	if err != nil {
 		return err
 	}
-	req.Header.Add("Authorization", "aivenv1 "+c.Token)
+	req.Header.Add("Authorization", "aivenv1 "+c.apiToken)
 
 	resp, err := c.client.Do(req)
 	if err != nil {
@@ -117,7 +118,13 @@ func (c *Client) GetInvoiceLines(ctx context.Context, billingGroupId string, inv
 		if fetchServiceTags(line.ServiceType) {
 			t, err := c.GetServiceTags(ctx, line.ProjectName, line.ServiceName)
 			if err != nil {
-				log.Warnf("failed to get service tags for project %s and service %s: %v", line.ProjectName, line.ServiceName, err)
+				c.logger.
+					WithFields(logrus.Fields{
+						"project": line.ProjectName,
+						"service": line.ServiceName,
+					}).
+					WithError(err).
+					Warnf("failed to get service tags")
 			}
 			tags = t
 		}
