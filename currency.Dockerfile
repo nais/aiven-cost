@@ -1,21 +1,12 @@
-FROM golang:1.21-alpine as builder
-
-RUN apk add --no-cache git
-
-WORKDIR /workspace
-COPY go.mod go.mod
-COPY go.sum go.sum
+ARG GO_VERSION=1.21
+FROM golang:${GO_VERSION}-alpine as builder
+WORKDIR /src
+COPY go.mod go.sum ./
 RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 go build -a -o bin/currency ./cmd/currency
 
-COPY . /workspace
-
-# Build
-RUN CGO_ENABLED=0 go build -a -o currencydata ./cmd/currency
-
-FROM alpine
-WORKDIR /
-
-COPY --from=builder /workspace/currencydata currency
-USER 65532:65532
-
-CMD ["/currency"]
+FROM gcr.io/distroless/base
+WORKDIR /app
+COPY --from=builder /src/bin/currency currency
+CMD ["/app/currency"]
