@@ -43,7 +43,7 @@ jobs:
         with:
           registry: ${{ env.REGISTRY }}
           username: oauth2accesstoken
-          password: ${{ needs.gcloud_auth.outputs.access_token }}
+          password: ${{ steps.auth.outputs.access_token }}
       - name: Docker meta
         id: metadata
         uses: docker/metadata-action@v5
