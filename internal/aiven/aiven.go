@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/nais/aiven-cost/internal/bigquery"
@@ -77,6 +78,11 @@ func parseServiceType(line InvoiceLine) string {
 	case "credit_consumption":
 		return "credit"
 	}
+
+	if strings.HasPrefix(line.ServiceName, "opensearch-") {
+		return "opensearch"
+	}
+
 	return line.ServiceType
 }
 
