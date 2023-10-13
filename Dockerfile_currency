@@ -10,7 +10,7 @@ RUN go mod download
 COPY . /workspace
 
 # Build
-RUN CGO_ENABLED=0 go build -a -o currencydata ./cmd/currency-data 
+RUN CGO_ENABLED=0 go build -a -o currencydata ./cmd/currency
 
 FROM alpine
 WORKDIR /

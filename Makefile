@@ -1,18 +1,18 @@
 .PHONY: local
 
-all: tidy fmt build-aiven-cost build-currency-data check
+all: tidy fmt build-aiven-cost build-currency check
 
 build-aiven-cost:
-	GOOS=linux GOARCH=amd64 go build -o bin/aiven-cost ./cmd/aiven-cost/main.go
+	go build -o bin/aiven-cost ./cmd/aiven-cost/main.go
 
-build-currency-data:
-	GOOS=linux GOARCH=amd64 go build -o bin/currency-data ./cmd/currency-data/main.go
+build-currency:
+	go build -o bin/currency ./cmd/currency/main.go
 
 aiven-cost:
 	go run ./cmd/aiven-cost/main.go
 
-currency-data:
-	go run ./cmd/currency-data/main.go
+currency:
+	go run ./cmd/currency/main.go
 
 check:
 	go run honnef.co/go/tools/cmd/staticcheck ./...
