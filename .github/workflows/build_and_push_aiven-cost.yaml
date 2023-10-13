@@ -16,10 +16,14 @@ jobs:
         id: go_version
         run: |
           echo "GO_VERSION=$(grep golang .tool-versions | awk '{print $2}')" >> $GITHUB_OUTPUT
+
   gcloud_auth:
     outputs:
       access_token: ${{ steps.auth.outputs.access_token }}
     runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - id: auth
         name: Authenticate to Google Cloud
@@ -28,6 +32,7 @@ jobs:
           workload_identity_provider: ${{ secrets.NAIS_IO_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: gh-aiven-cost@nais-io.iam.gserviceaccount.com
           token_format: access_token
+
   build_and_push:
     needs:
       - go_version
