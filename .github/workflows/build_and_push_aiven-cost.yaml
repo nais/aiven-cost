@@ -3,52 +3,43 @@ on:
   push:
     branches:
       - main
+
 env:
   REGISTRY: europe-north1-docker.pkg.dev/nais-io/nais/images
-jobs:
-  go_version:
-    outputs:
-      go_version: ${{ steps.go_version.outputs.GO_VERSION }}
-    runs-on: ubuntu-22.04
-    steps:
-      - uses: actions/checkout@v4
-      - name: Find Go version
-        id: go_version
-        run: |
-          echo "GO_VERSION=$(grep golang .tool-versions | awk '{print $2}')" >> $GITHUB_OUTPUT
 
+jobs:
   build_and_push:
-    needs: [ go_version ]
     outputs:
       tags: ${{ steps.metadata.outputs.tags }}
     permissions:
-      contents: read
-      id-token: write
+      contents: "read"
+      id-token: "write"
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
-      - name: Set up Docker Buildx
-        id: buildx
-        uses: docker/setup-buildx-action@v3
-      - id: auth
-        name: Authenticate to Google Cloud
-        uses: google-github-actions/auth@v1
+        uses: actions/checkout@v3
+      - id: "auth"
+        name: "Authenticate to Google Cloud"
+        uses: "google-github-actions/auth@v0.6.0"
         with:
           workload_identity_provider: ${{ secrets.NAIS_IO_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: gh-aiven-cost@nais-io.iam.gserviceaccount.com
-          token_format: access_token
+          service_account: "gh-aiven-cost@nais-io.iam.gserviceaccount.com"
+          token_format: "access_token"
+      - name: Set up Docker Buildx
+        id: buildx
+        uses: docker/setup-buildx-action@v2
       - name: Login to registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@v2
         with:
           registry: ${{ env.REGISTRY }}
-          username: oauth2accesstoken
-          password: ${{ steps.auth.outputs.access_token }}
+          username: "oauth2accesstoken"
+          password: "${{ steps.auth.outputs.access_token }}"
       - name: Docker meta
         id: metadata
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v4
         with:
           images: ${{ env.REGISTRY }}/aiven-cost
+          # Docker tags based on the following events/attributes
           tags: |
             type=schedule
             type=ref,event=branch
@@ -58,7 +49,7 @@ jobs:
             type=semver,pattern=v{{major}}
             type=sha
       - name: Build and push aiven-cost
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v4
         with:
           context: .
           file: aiven-cost.Dockerfile
@@ -67,30 +58,27 @@ jobs:
           labels: ${{ steps.metadata.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          build_args: |
-            GO_VERSION=${{ needs.go_version.outputs.go_version }}
   deploy_aiven-cost:
     if: github.ref == 'refs/heads/main'
-    runs-on: [fasit-deploy]
-    needs: [ build_and_push ]
+    runs-on: ["fasit-deploy"]
+    needs: ["build_and_push"]
     permissions:
-      contents: read
-      id-token: write
+      contents: "read"
+      id-token: "write"
     steps:
       - name: Checkout aiven-cost
-        uses: actions/checkout@v4
-      - id: auth
-        name: Authenticate to Google Cloud
-        uses: google-github-actions/auth@v1
+        uses: actions/checkout@v3.3.0
+      - id: "auth"
+        name: "Authenticate to Google Cloud"
+        uses: "google-github-actions/auth@v1.0.0"
         with:
           workload_identity_provider: ${{ secrets.NAIS_IO_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: gh-aiven-cost@nais-io.iam.gserviceaccount.com
+          service_account: "gh-aiven-cost@nais-io.iam.gserviceaccount.com"
+          token_format: "access_token"
       - name: Get credentials
         shell: bash
         run: |
           gcloud container clusters get-credentials nais-io --project nais-io --region europe-north1
-        env:
-          CLOUDSDK_AUTH_ACCESS_TOKEN: ${{ needs.gcloud_auth.outputs.access_token }}
       - name: deploy aiven-cost
         env:
           AIVEN_TOKEN: ${{ secrets.AIVEN_TOKEN }}
