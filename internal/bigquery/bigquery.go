@@ -35,17 +35,13 @@ func New(ctx context.Context, projectID, dataset, costItemsTable, currencyTable 
 }
 
 func (c *Client) CreateTableIfNotExists(ctx context.Context, schema any, tableName string) error {
-	if err := c.tableExists(ctx, tableName); err != nil {
-		if err.Error() != "dataset or table not found" {
-			return fmt.Errorf("failed to check if table exists: %w", err)
-		}
+	if exists, err := c.tableExists(ctx, tableName); err != nil {
+		return fmt.Errorf("failed to check if table exists: %w", err)
+	} else if exists {
+		return nil
 	}
 
-	if err := c.createTable(ctx, schema, tableName); err != nil {
-		return err
-	}
-
-	return nil
+	return c.createTable(ctx, schema, tableName)
 }
 
 func (c *Client) createTable(ctx context.Context, schema any, tableName string) error {
@@ -62,15 +58,16 @@ func (c *Client) createTable(ctx context.Context, schema any, tableName string) 
 }
 
 // tableExists checks wheter a table exists on a given dataset.
-func (c *Client) tableExists(ctx context.Context, tableName string) error {
+func (c *Client) tableExists(ctx context.Context, tableName string) (exists bool, err error) {
 	tableRef := c.client.Dataset(c.dataset).Table(tableName)
 	if _, err := tableRef.Metadata(ctx); err != nil {
 		if e, ok := err.(*googleapi.Error); ok {
 			if e.Code == http.StatusNotFound {
-				return fmt.Errorf("dataset or table not found")
+				return false, nil
 			}
 		}
+		return false, err
 	}
 
-	return nil
+	return true, nil
 }
