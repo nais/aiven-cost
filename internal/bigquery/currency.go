@@ -36,32 +36,6 @@ func (c *Client) GetNewestDate(ctx context.Context) (time.Time, error) {
 	return date, nil
 }
 
-func (c *Client) GetCurrencyDates(ctx context.Context) ([]string, error) {
-	var dates []string
-	q := c.client.Query("SELECT date FROM " + c.client.Project() + "." + c.dataset + "." + c.currencyTable + " ORDER BY date ASC")
-	it, err := q.Read(ctx)
-	if err != nil {
-		return dates, err
-	}
-
-	for {
-		var values []bigquery.Value
-		err := it.Next(&values)
-		if err == iterator.Done {
-			break
-		}
-		if err != nil {
-			return dates, err
-		}
-		date := values[0].(string)
-		if err != nil {
-			return dates, err
-		}
-		dates = append(dates, date)
-	}
-	return dates, nil
-}
-
 func (c *Client) InsertCurrencyRates(ctx context.Context, rates []CurrencyRate) error {
 	err := c.client.Dataset(c.dataset).Table(c.currencyTable).Inserter().Put(ctx, rates)
 	if err != nil {
