@@ -11,6 +11,9 @@ type Aiven struct {
 
 	// Token is the Aiven API token
 	Token string `envconfig:"AIVEN_API_TOKEN" default:""`
+
+	// BillingGroupID is the ID for the Aiven billing group
+	BillingGroupID string `envconfig:"AIVEN_BILLING_GROUP_ID" default:""`
 }
 
 // Log configuration

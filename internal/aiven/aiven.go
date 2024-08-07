@@ -14,18 +14,20 @@ import (
 )
 
 type Client struct {
-	client   *http.Client
-	apiHost  string
-	apiToken string
-	logger   *logrus.Logger
+	client         *http.Client
+	apiHost        string
+	apiToken       string
+	billingGroupID string
+	logger         *logrus.Logger
 }
 
-func New(apiHost, token string, logger *logrus.Logger) *Client {
+func New(apiHost, token, billingGroupID string, logger *logrus.Logger) *Client {
 	return &Client{
-		client:   http.DefaultClient,
-		apiHost:  apiHost,
-		apiToken: token,
-		logger:   logger,
+		client:         http.DefaultClient,
+		apiHost:        apiHost,
+		apiToken:       token,
+		billingGroupID: billingGroupID,
+		logger:         logger,
 	}
 }
 
@@ -47,24 +49,12 @@ func (c *Client) do(ctx context.Context, v any, method, path string, body io.Rea
 	return json.NewDecoder(resp.Body).Decode(v)
 }
 
-func (c *Client) GetBillingGroups(ctx context.Context) (BillingGroups, error) {
-	billingGroups := struct {
-		BillingGroups BillingGroups `json:"billing_groups"`
-	}{}
-
-	if err := c.do(ctx, &billingGroups, http.MethodGet, "/v1/billing-group", nil); err != nil {
-		return nil, err
-	}
-
-	return billingGroups.BillingGroups, nil
-}
-
-func (c *Client) GetInvoices(ctx context.Context, billingGroupId string) ([]Invoice, error) {
+func (c *Client) GetInvoices(ctx context.Context) ([]Invoice, error) {
 	invoices := struct {
 		Invoices []Invoice `json:"invoices"`
 	}{}
 
-	if err := c.do(ctx, &invoices, http.MethodGet, "/v1/billing-group/"+billingGroupId+"/invoice", nil); err != nil {
+	if err := c.do(ctx, &invoices, http.MethodGet, "/v1/billing-group/"+c.billingGroupID+"/invoice", nil); err != nil {
 		return nil, err
 	}
 
@@ -109,13 +99,13 @@ func fetchServiceTags(serviceType string) bool {
 	return true
 }
 
-func (c *Client) GetInvoiceLines(ctx context.Context, billingGroupId string, invoice Invoice) ([]bigquery.Line, error) {
+func (c *Client) GetInvoiceLines(ctx context.Context, invoice Invoice) ([]bigquery.Line, error) {
 	invoiceLines := struct {
 		InvoiceLines []InvoiceLine `json:"lines"`
 	}{}
 	ret := []bigquery.Line{}
 
-	if err := c.do(ctx, &invoiceLines, http.MethodGet, "/v1/billing-group/"+billingGroupId+"/invoice/"+invoice.InvoiceId+"/lines", nil); err != nil {
+	if err := c.do(ctx, &invoiceLines, http.MethodGet, "/v1/billing-group/"+c.billingGroupID+"/invoice/"+invoice.InvoiceId+"/lines", nil); err != nil {
 		return nil, err
 	}
 
@@ -136,7 +126,7 @@ func (c *Client) GetInvoiceLines(ctx context.Context, billingGroupId string, inv
 		}
 
 		ret = append(ret, bigquery.Line{
-			BillingGroupId: billingGroupId,
+			BillingGroupId: c.billingGroupID,
 			InvoiceId:      invoice.InvoiceId,
 			ProjectName:    line.ProjectName,
 			Environment:    tags.Environment,
@@ -169,35 +159,4 @@ func (c *Client) GetServiceTags(ctx context.Context, projectName, serviceName st
 	}
 
 	return tags.Tags, nil
-}
-
-func (c *Client) GetInvoiceIDs(ctx context.Context) (map[string]string, error) {
-	billingGroups, err := c.GetBillingGroups(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get billing groups %v", err)
-	}
-	ret := make(map[string]string)
-
-	for _, billingGroup := range billingGroups {
-		invoices, err := c.GetInvoices(ctx, billingGroup.BillingGroupId)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get invoices for billing group %s", billingGroup.BillingGroupId)
-		}
-		for _, invoice := range invoices {
-			ret[invoice.InvoiceId] = billingGroup.BillingGroupId
-		}
-	}
-	return ret, nil
-}
-
-func (c *Client) GetInvoice(ctx context.Context, billingGroupId, invoiceId string) (Invoice, error) {
-	invoice := struct {
-		Invoice Invoice `json:"invoice"`
-	}{}
-
-	if err := c.do(ctx, &invoice, http.MethodGet, "/v1/billing-group/"+billingGroupId+"/invoice/"+invoiceId, nil); err != nil {
-		return Invoice{}, err
-	}
-
-	return invoice.Invoice, nil
 }

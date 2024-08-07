@@ -26,27 +26,3 @@ type Invoice struct {
 	TotalIncVat string `json:"total_inc_vat"`
 	Status      string `json:"invoice_state"`
 }
-
-type BillingGroups []BillingGroup
-
-type BillingGroup struct {
-	AccountName      string `json:"account_name"`
-	BillingGroupId   string `json:"billing_group_id"`
-	BillingGroupName string `json:"billing_group_name"`
-	BillingCurrency  string `json:"billing_currency"`
-}
-
-/*func (i *InvoiceLine) Save() (map[string]bigquery.Value, string, error) {
-	return map[string]bigquery.Value{
-		"timestamp_begin": i.TimestampBegin,
-		"timestamp_end":   i.TimestampEnd,
-		"cost":            i.Cost,
-		"service_name":    i.ServiceName,
-		"currency":        i.Currency,
-		"service_type":    i.ServiceType,
-		"project_name":    i.ProjectName,
-		"line_type":       i.LineType,
-		//"status":          i.Status,
-		//"invoice_id":      i.InvoiceId,
-	}, "", nil
-}*/
