@@ -28,6 +28,9 @@ spec:
           - image: europe-north1-docker.pkg.dev/nais-io/nais/images/aiven-cost:sha-IMAGE_TAG
             imagePullPolicy: Always
             name: aiven-cost
+            env:
+              - name: AIVEN_BILLING_GROUP_ID
+                value: 7d14362d-1e2a-4864-b408-1cc631bc4fab
             envFrom:
               - secretRef:
                   name: aiven-cost
