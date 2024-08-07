@@ -90,5 +90,5 @@ jobs:
         shell: bash
         run: |
           IMAGE_TAG=${GITHUB_SHA:0:7}
-          kubectl -n nais-system create secret generic aiven-cost --from-literal=AIVEN_API_TOKEN=$AIVEN_API_TOKEN --dry-run=client -o yaml | kubectl apply -f -
+          kubectl -n nais-system create secret generic aiven-cost --from-literal=AIVEN_API_TOKEN=$AIVEN_API_TOKEN --from-literal=AIVEN_BILLING_GROUP_ID=$AIVEN_BILLING_GROUP_ID --dry-run=client -o yaml | kubectl apply -f -
           sed "s|IMAGE_TAG|${IMAGE_TAG}|g" ./.nais/aiven-cost.yaml | kubectl apply -f -
