@@ -14,18 +14,20 @@ import (
 )
 
 type Client struct {
-	client   *http.Client
-	apiHost  string
-	apiToken string
-	logger   *logrus.Logger
+	client         *http.Client
+	apiHost        string
+	apiToken       string
+	billingGroupID string
+	logger         *logrus.Logger
 }
 
-func New(apiHost, token string, logger *logrus.Logger) *Client {
+func New(apiHost, token, billingGroupID string, logger *logrus.Logger) *Client {
 	return &Client{
-		client:   http.DefaultClient,
-		apiHost:  apiHost,
-		apiToken: token,
-		logger:   logger,
+		client:         http.DefaultClient,
+		apiHost:        apiHost,
+		apiToken:       token,
+		billingGroupID: billingGroupID,
+		logger:         logger,
 	}
 }
 
@@ -48,15 +50,11 @@ func (c *Client) do(ctx context.Context, v any, method, path string, body io.Rea
 }
 
 func (c *Client) GetBillingGroups(ctx context.Context) (BillingGroups, error) {
-	billingGroups := struct {
-		BillingGroups BillingGroups `json:"billing_groups"`
-	}{}
-
-	if err := c.do(ctx, &billingGroups, http.MethodGet, "/v1/billing-group", nil); err != nil {
-		return nil, err
-	}
-
-	return billingGroups.BillingGroups, nil
+	return BillingGroups{
+		{
+			BillingGroupId: c.billingGroupID,
+		},
+	}, nil
 }
 
 func (c *Client) GetInvoices(ctx context.Context, billingGroupId string) ([]Invoice, error) {

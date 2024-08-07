@@ -44,7 +44,7 @@ func main() {
 func run(cfg *config.Config, logger *logrus.Logger) error {
 	ctx := context.Background()
 
-	aivenClient := aiven.New(cfg.Aiven.ApiHost, cfg.Aiven.Token, logger)
+	aivenClient := aiven.New(cfg.Aiven.ApiHost, cfg.Aiven.Token, cfg.Aiven.BillingGroupID, logger)
 	bqClient, err := bigquery.New(ctx, cfg.BigQuery.ProjectID, cfg.BigQuery.Dataset, cfg.BigQuery.CostItemsTable, cfg.BigQuery.CurrencyTable)
 	if err != nil {
 		return fmt.Errorf("failed to create bigquery client: %w", err)
