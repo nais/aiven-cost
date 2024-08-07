@@ -27,15 +27,6 @@ type Invoice struct {
 	Status      string `json:"invoice_state"`
 }
 
-type BillingGroups []BillingGroup
-
-type BillingGroup struct {
-	AccountName      string `json:"account_name"`
-	BillingGroupId   string `json:"billing_group_id"`
-	BillingGroupName string `json:"billing_group_name"`
-	BillingCurrency  string `json:"billing_currency"`
-}
-
 /*func (i *InvoiceLine) Save() (map[string]bigquery.Value, string, error) {
 	return map[string]bigquery.Value{
 		"timestamp_begin": i.TimestampBegin,

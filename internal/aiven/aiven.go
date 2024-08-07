@@ -49,14 +49,6 @@ func (c *Client) do(ctx context.Context, v any, method, path string, body io.Rea
 	return json.NewDecoder(resp.Body).Decode(v)
 }
 
-func (c *Client) GetBillingGroups(ctx context.Context) (BillingGroups, error) {
-	return BillingGroups{
-		{
-			BillingGroupId: c.billingGroupID,
-		},
-	}, nil
-}
-
 func (c *Client) GetInvoices(ctx context.Context, billingGroupId string) ([]Invoice, error) {
 	invoices := struct {
 		Invoices []Invoice `json:"invoices"`
@@ -170,21 +162,16 @@ func (c *Client) GetServiceTags(ctx context.Context, projectName, serviceName st
 }
 
 func (c *Client) GetInvoiceIDs(ctx context.Context) (map[string]string, error) {
-	billingGroups, err := c.GetBillingGroups(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get billing groups %v", err)
-	}
 	ret := make(map[string]string)
 
-	for _, billingGroup := range billingGroups {
-		invoices, err := c.GetInvoices(ctx, billingGroup.BillingGroupId)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get invoices for billing group %s", billingGroup.BillingGroupId)
-		}
-		for _, invoice := range invoices {
-			ret[invoice.InvoiceId] = billingGroup.BillingGroupId
-		}
+	invoices, err := c.GetInvoices(ctx, c.billingGroupID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get invoices for billing group %s", c.billingGroupID)
 	}
+	for _, invoice := range invoices {
+		ret[invoice.InvoiceId] = c.billingGroupID
+	}
+
 	return ret, nil
 }
 
