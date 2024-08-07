@@ -69,23 +69,18 @@ func run(cfg *config.Config, logger *logrus.Logger) error {
 	}
 
 	logger.Infof("fetch aiven invoice ids")
-	aivenInvoiceIDs, err := aivenClient.GetInvoiceIDs(ctx)
+	aivenInvoices, err := aivenClient.GetInvoices(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to get invoice ids: %w", err)
 	}
 
 	logger.Infof("filter out paid invoices")
-	unprocessedInvoices := filterPaidInvoices(aivenInvoiceIDs, bqInvoices)
-	logger.Infof("fetch invoice details from aiven and insert into bigquery for %d invoices of a total of %d", len(unprocessedInvoices), len(aivenInvoiceIDs))
-	for invoiceID, billingGroup := range unprocessedInvoices {
-		invoice, err := aivenClient.GetInvoice(ctx, billingGroup, invoiceID)
+	unprocessedInvoices := filterPaidInvoices(aivenInvoices, bqInvoices)
+	logger.Infof("fetch invoice details from aiven and insert into bigquery for %d invoices of a total of %d", len(unprocessedInvoices), len(aivenInvoices))
+	for _, invoice := range unprocessedInvoices {
+		invoiceLines, err := aivenClient.GetInvoiceLines(ctx, invoice)
 		if err != nil {
-			return fmt.Errorf("failed to get invoice for invoice %s: %w", invoiceID, err)
-		}
-
-		invoiceLines, err := aivenClient.GetInvoiceLines(ctx, billingGroup, invoice)
-		if err != nil {
-			return fmt.Errorf("failed to get invoice details for invoice %s: %w", invoiceID, err)
+			return fmt.Errorf("failed to get invoice details for invoice %s: %w", invoice.InvoiceId, err)
 		}
 
 		err = bqClient.InsertCostItems(ctx, invoiceLines)
@@ -97,13 +92,13 @@ func run(cfg *config.Config, logger *logrus.Logger) error {
 	return nil
 }
 
-func filterPaidInvoices(aivenInvoiceIDs, bqInvoices map[string]string) map[string]string {
-	unprocessedInvoices := make(map[string]string)
-	for invoiceID, billingGroup := range aivenInvoiceIDs {
-		if _, ok := bqInvoices[invoiceID]; ok && bqInvoices[invoiceID] == "paid" {
+func filterPaidInvoices(aivenInvoices []aiven.Invoice, bqInvoices map[string]string) []aiven.Invoice {
+	unprocessedInvoices := make([]aiven.Invoice, 0)
+	for _, invoice := range aivenInvoices {
+		if _, ok := bqInvoices[invoice.InvoiceId]; ok && bqInvoices[invoice.InvoiceId] == "paid" {
 			continue
 		}
-		unprocessedInvoices[invoiceID] = billingGroup
+		unprocessedInvoices = append(unprocessedInvoices, invoice)
 	}
 	return unprocessedInvoices
 }
