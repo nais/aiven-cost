@@ -24,5 +24,5 @@ type InvoiceLine struct {
 type Invoice struct {
 	InvoiceId   string `json:"invoice_number"`
 	TotalIncVat string `json:"total_inc_vat"`
-	Status      string `json:"invoice_state"`
+	Status      string `json:"state"`
 }
