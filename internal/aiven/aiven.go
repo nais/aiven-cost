@@ -2,12 +2,11 @@ package aiven
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
-	"strings"
 	"time"
+
+	aivenclient "github.com/aiven/go-client-codegen"
 
 	"github.com/nais/aiven-cost/internal/bigquery"
 	"github.com/sirupsen/logrus"
@@ -15,65 +14,56 @@ import (
 
 type Client struct {
 	client         *http.Client
+	aivenClient    aivenclient.Client
 	apiHost        string
 	apiToken       string
 	billingGroupID string
 	logger         *logrus.Logger
 }
 
-func New(apiHost, token, billingGroupID string, logger *logrus.Logger) *Client {
+func New(apiHost, token, billingGroupID string, logger *logrus.Logger) (*Client, error) {
+	client, err := aivenclient.NewClient(aivenclient.TokenOpt(token), aivenclient.UserAgentOpt("nais-aiven-cost"))
+	if err != nil {
+		return nil, err
+	}
 	return &Client{
 		client:         http.DefaultClient,
+		aivenClient:    client,
 		apiHost:        apiHost,
 		apiToken:       token,
 		billingGroupID: billingGroupID,
 		logger:         logger,
-	}
-}
-
-func (c *Client) do(ctx context.Context, v any, method, path string, body io.Reader) error {
-	req, err := http.NewRequestWithContext(ctx, method, "https://"+c.apiHost+path, body)
-	if err != nil {
-		return err
-	}
-	req.Header.Add("Authorization", "aivenv1 "+c.apiToken)
-
-	resp, err := c.client.Do(req)
-	if err != nil {
-		return err
-	}
-	if method == http.MethodGet && resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("unexpected status code: %d", resp.StatusCode)
-	}
-	defer resp.Body.Close()
-	return json.NewDecoder(resp.Body).Decode(v)
+	}, nil
 }
 
 func (c *Client) GetInvoices(ctx context.Context) ([]Invoice, error) {
 	invoices := struct {
 		Invoices []Invoice `json:"invoices"`
 	}{}
-
-	if err := c.do(ctx, &invoices, http.MethodGet, "/v1/billing-group/"+c.billingGroupID+"/invoice", nil); err != nil {
+	aivenInvoices, err := c.aivenClient.BillingGroupInvoiceList(ctx, c.billingGroupID)
+	if err != nil {
 		return nil, err
 	}
-
+	for _, aivenInvoice := range aivenInvoices {
+		invoices.Invoices = append(invoices.Invoices, Invoice{
+			InvoiceId:   aivenInvoice.InvoiceNumber,
+			TotalIncVat: aivenInvoice.TotalIncVat,
+			Status:      string(aivenInvoice.State),
+		})
+	}
 	return invoices.Invoices, nil
 }
 
-func parseServiceType(line InvoiceLine) string {
-	switch line.LineType {
+func parseServiceType(lineType, serviceType string) string {
+	switch lineType {
 	case "support_charge", "extra_charge":
 		return "support"
 	case "credit_consumption":
 		return "credit"
-	}
 
-	if strings.HasPrefix(line.ServiceName, "opensearch-") {
-		return "opensearch"
+	default:
+		return serviceType
 	}
-
-	return line.ServiceType
 }
 
 func parseTenant(tenant string) string {
@@ -87,58 +77,51 @@ func parseTeam(team, serviceType string) string {
 	switch serviceType {
 	case "kafka", "support_charge", "extra_charge", "credit_consumption":
 		return "nais"
+	default:
+		return team
 	}
-	return team
-}
-
-func fetchServiceTags(serviceType string) bool {
-	switch serviceType {
-	case "support_charge", "extra_charge", "credit_consumption":
-		return false
-	}
-	return true
 }
 
 func (c *Client) GetInvoiceLines(ctx context.Context, invoice Invoice) ([]bigquery.Line, error) {
-	invoiceLines := struct {
-		InvoiceLines []InvoiceLine `json:"lines"`
-	}{}
 	ret := []bigquery.Line{}
 
-	if err := c.do(ctx, &invoiceLines, http.MethodGet, "/v1/billing-group/"+c.billingGroupID+"/invoice/"+invoice.InvoiceId+"/lines", nil); err != nil {
+	aivenInvoiceLines, err := c.aivenClient.BillingGroupInvoiceLinesList(ctx, c.billingGroupID, invoice.InvoiceId)
+	if err != nil {
 		return nil, err
 	}
 
-	for _, line := range invoiceLines.InvoiceLines {
+	for _, line := range aivenInvoiceLines {
 		tags := Tags{}
-		if fetchServiceTags(line.ServiceType) {
-			t, err := c.GetServiceTags(ctx, line.ProjectName, line.ServiceName)
-			if err != nil {
-				c.logger.
-					WithFields(logrus.Fields{
-						"project": line.ProjectName,
-						"service": line.ServiceName,
-					}).
-					WithError(err).
-					Warnf("failed to get service tags")
-			}
-			tags = t
+		t, err := c.GetServiceTags(ctx, *line.ProjectName, *line.ServiceName)
+		if err != nil {
+			c.logger.
+				WithFields(logrus.Fields{
+					"project": line.ProjectName,
+					"service": line.ServiceName,
+				}).
+				WithError(err).
+				Warnf("failed to get service tags")
 		}
+		tags = t
 
+		timestampBegin, err := time.Parse(time.RFC3339, *line.TimestampBegin)
+		if err != nil {
+			return nil, err
+		}
 		ret = append(ret, bigquery.Line{
 			BillingGroupId: c.billingGroupID,
 			InvoiceId:      invoice.InvoiceId,
-			ProjectName:    line.ProjectName,
+			ProjectName:    *line.ProjectName,
 			Environment:    tags.Environment,
-			Team:           parseTeam(tags.Team, line.ServiceType),
-			Service:        parseServiceType(line),
-			ServiceName:    line.ServiceName,
+			Team:           parseTeam(tags.Team, string(line.ServiceType)),
+			Service:        parseServiceType(string(line.LineType), string(line.ServiceType)),
+			ServiceName:    *line.ServiceName,
 			Tenant:         parseTenant(tags.Tenant),
 			Status:         invoice.Status,
-			Cost:           line.Cost,
-			Currency:       line.Currency,
-			Date:           fmt.Sprintf("%02d-%02d", line.TimestampBegin.Year(), line.TimestampBegin.Month()),
-			NumberOfDays:   daysIn(line.TimestampBegin.Month(), line.TimestampBegin.Year()),
+			Cost:           *line.LineTotalLocal,
+			Currency:       *line.LocalCurrency,
+			Date:           fmt.Sprintf("%02d-%02d", timestampBegin.Year(), timestampBegin.Month()),
+			NumberOfDays:   daysIn(timestampBegin.Month(), timestampBegin.Year()),
 		})
 
 	}
@@ -154,8 +137,20 @@ func (c *Client) GetServiceTags(ctx context.Context, projectName, serviceName st
 	tags := struct {
 		Tags Tags `json:"tags"`
 	}{}
-	if err := c.do(ctx, &tags, http.MethodGet, "/v1/project/"+projectName+"/service/"+serviceName+"/tags", nil); err != nil {
+
+	resp, err := c.aivenClient.ProjectServiceTagsList(ctx, projectName, serviceName)
+	if err != nil {
 		return Tags{}, err
+	}
+
+	if val, ok := resp["tenant"]; ok {
+		tags.Tags.Tenant = val
+	}
+	if val, ok := resp["environment"]; ok {
+		tags.Tags.Environment = val
+	}
+	if val, ok := resp["team"]; ok {
+		tags.Tags.Team = val
 	}
 
 	return tags.Tags, nil
