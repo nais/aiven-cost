@@ -1,4 +1,6 @@
-.env
+.env*
 aiven-cost.log
 /.idea
 /bin
+result*
+/.direnv
