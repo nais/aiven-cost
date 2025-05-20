@@ -15,12 +15,7 @@
       in
       {
         devShells.default = pkgs.mkShell {
-          packages = with pkgs; [
-            delve
-            go
-            ginkgo
-            postgresql
-          ];
+          packages = with pkgs; [ go ];
         };
         formatter = inputs.treefmt-nix.lib.mkWrapper pkgs {
           programs.nixfmt.enable = true;
