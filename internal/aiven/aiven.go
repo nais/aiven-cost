@@ -121,7 +121,7 @@ func (c *Client) GetInvoiceLines(ctx context.Context, invoice Invoice) ([]bigque
 			Cost:           *line.LineTotalLocal,
 			Currency:       *line.LocalCurrency,
 			Date:           fmt.Sprintf("%02d-%02d", timestampBegin.Year(), timestampBegin.Month()),
-			NumberOfDays:   daysIn(timestampBegin.Month(), timestampBegin.Year()),
+			NumberOfDays:   amountOfDaysInMonth(timestampBegin.Month(), timestampBegin.Year()),
 		})
 
 	}
@@ -129,7 +129,7 @@ func (c *Client) GetInvoiceLines(ctx context.Context, invoice Invoice) ([]bigque
 	return ret, nil
 }
 
-func daysIn(m time.Month, year int) int {
+func amountOfDaysInMonth(m time.Month, year int) int {
 	return time.Date(year, m+1, 0, 0, 0, 0, 0, time.UTC).Day()
 }
 
