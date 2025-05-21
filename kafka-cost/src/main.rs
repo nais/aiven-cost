@@ -1,7 +1,7 @@
 use anyhow::Result;
 use tracing::info;
 use std::collections::HashMap;
-use serde_json::json;
+use serde_json::{json, Value};
 use reqwest::{header, ClientBuilder};
 
 pub fn init_tracing_subscriber() -> Result<()> {
@@ -50,7 +50,9 @@ async fn main() -> Result<()>{
     info!("started kafka-cost");
     let cfg = Cfg::new()?;
     let aiven_client = client(&cfg.aiven_api_token)?;
+
     let res = aiven_client.get(&format!("https://api.aiven.io/v1/billing-group/{}/invoice", cfg.billing_group_id)).bearer_auth(cfg.aiven_api_token).send().await?;
-    dbg!(res);
+    let mut lookup: HashMap<String, Value> = serde_json::from_str(&res.text().await?).unwrap();
+    dbg!(lookup);
     Ok(())
 }
