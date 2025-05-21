@@ -1,6 +1,6 @@
-use anyhow::Result;
-use reqwest::{ClientBuilder, header};
-use serde_json::{Value, json};
+use anyhow::{Result, bail};
+use bigdecimal::{BigDecimal, Num};
+use serde_json::Value;
 use std::collections::HashMap;
 use tracing::info;
 
@@ -9,7 +9,7 @@ pub fn init_tracing_subscriber() -> Result<()> {
     Ok(())
 }
 
-fn client(token: &str) -> Result<reqwest::Client> {
+fn client() -> Result<reqwest::Client> {
     reqwest::Client::builder()
         .https_only(true)
         .user_agent("nais-kafka-cost")
@@ -40,14 +40,77 @@ impl Cfg {
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum AivenInvoiceState {
+    Paid,
+    Mailed,
+    Estimate,
+}
+
+impl AivenInvoiceState {
+    fn from_json_obj(obj: &serde_json::Value) -> Result<Self> {
+        let Some(json_string) = obj.as_str() else {
+            bail!("Unable to parse as str: {obj:?}")
+        };
+        let result = match json_string {
+            "paid" => Self::Paid,
+            "mailed" => Self::Mailed,
+            "estimate" => Self::Estimate,
+            _ => bail!("Unknown state: '{json_string}'"),
+        };
+        Ok(result)
+    }
+}
+
+#[derive(Debug)]
+struct AivenInvoice {
+    pub(crate) id: String,
+    pub(crate) total_inc_vat: BigDecimal,
+    pub(crate) state: AivenInvoiceState,
+}
+
+impl AivenInvoice {
+    fn from_json_obj(obj: &serde_json::Value) -> Result<Self> {
+        let total_inc_vat_key = "total_inc_vat";
+        let Some(Some(total_inc_vat_json)) = obj.get(total_inc_vat_key).map(|s| s.as_str()) else {
+            bail!("Unable to find `{total_inc_vat_key}` in: {obj:?}")
+        };
+        // TODO: Verify this is correct, and we're not supposed to turn it into float first or something
+        let Ok(total_inc_vat) = BigDecimal::from_str_radix(total_inc_vat_json, 10) else {
+            bail!("Unable to parse as bigdecimal: '{total_inc_vat_json}'")
+        };
+
+        let invoice_number_key = "invoice_number";
+        let Some(Some(id)) = obj.get(invoice_number_key).map(|s| s.as_str()) else {
+            bail!("Unable to parse/find invoice's '{invoice_number_key}': {obj:?}")
+        };
+
+        let state_key = "state";
+        let Some(state_json) = obj.get(state_key) else {
+            bail!("Unable to find invoice's '{state_key}': {obj:?}")
+        };
+        let state = AivenInvoiceState::from_json_obj(state_json)?;
+
+        Ok(Self {
+            id: id.to_string(),
+            total_inc_vat,
+            state,
+        })
+    }
+
+    fn from_json_list(list: &[serde_json::Value]) -> Result<Vec<Self>> {
+        Ok(list.iter().flat_map(Self::from_json_obj).collect())
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     init_tracing_subscriber()?;
     info!("started kafka-cost");
     let cfg = Cfg::new()?;
-    let aiven_client = client(&cfg.aiven_api_token)?;
 
-    let res = aiven_client
+    let aiven_client = client()?;
+    let response = aiven_client
         .get(&format!(
             "https://api.aiven.io/v1/billing-group/{}/invoice",
             cfg.billing_group_id
@@ -55,7 +118,21 @@ async fn main() -> Result<()> {
         .bearer_auth(cfg.aiven_api_token)
         .send()
         .await?;
-    let mut lookup: HashMap<String, Value> = serde_json::from_str(&res.text().await?).unwrap();
-    dbg!(lookup);
+    let response_body: HashMap<String, Value> =
+        serde_json::from_str(&response.text().await?).unwrap();
+    let Some(response_invoices) = response_body
+        .get("invoices")
+        .and_then(|invoices| invoices.as_array())
+    else {
+        bail!("Aiven's BillingGroup invoices API return doesn't follow expected structure")
+    };
+
+    let invoices: Vec<_> = AivenInvoice::from_json_list(response_invoices)?;
+    let unpaid_invoices: Vec<_> = invoices
+        .iter()
+        .filter(|i| i.state != AivenInvoiceState::Paid)
+        .collect();
+    dbg!(unpaid_invoices);
+
     Ok(())
 }

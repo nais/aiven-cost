@@ -44,6 +44,7 @@
           packages = with pkgs; [
             go
             rust-analyzer
+            cargo-watch
 
             # To install aiven's cli
             pipx
