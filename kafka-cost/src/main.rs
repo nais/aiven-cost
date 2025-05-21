@@ -1,6 +1,4 @@
 use anyhow::{Result, bail};
-use bigdecimal::{BigDecimal, Num};
-use serde_json::Value;
 use std::collections::HashMap;
 use tracing::info;
 
@@ -40,68 +38,65 @@ impl Cfg {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
-enum AivenInvoiceState {
-    Paid,
-    Mailed,
-    Estimate,
+async fn get_aiven_billing_group(
+    reqwest_client: &reqwest::Client,
+    cfg: &Cfg,
+) -> Result<Vec<serde_json::Value>> {
+    let url = format!(
+        "https://api.aiven.io/v1/billing-group/{}/invoice",
+        cfg.billing_group_id
+    );
+    let response = reqwest_client
+        .get(&url)
+        .bearer_auth(cfg.aiven_api_token.clone())
+        .send()
+        .await?;
+    let Ok(response_body) =
+        serde_json::from_str::<HashMap<String, serde_json::Value>>(&response.text().await?)
+    else {
+        bail!("Unable to parse json returned from: GET {url}")
+    };
+    let Some(response_invoices) = response_body
+        .get("invoices")
+        .and_then(|invoices| invoices.as_array())
+    else {
+        bail!("Aiven's BillingGroup invoices API return doesn't follow expected structure")
+    };
+    Ok(response_invoices.to_vec())
 }
 
-impl AivenInvoiceState {
-    fn from_json_obj(obj: &serde_json::Value) -> Result<Self> {
-        let Some(json_string) = obj.as_str() else {
-            bail!("Unable to parse as str: {obj:?}")
-        };
-        let result = match json_string {
-            "paid" => Self::Paid,
-            "mailed" => Self::Mailed,
-            "estimate" => Self::Estimate,
-            _ => bail!("Unknown state: '{json_string}'"),
-        };
-        Ok(result)
-    }
+async fn get_aiven_billing_group_invoice_list(
+    reqwest_client: &reqwest::Client,
+    cfg: &Cfg,
+    invoice_id: &str,
+) -> Result<Vec<serde_json::Value>> {
+    let url = format!(
+        "https://api.aiven.io/v1/billing-group/{}/invoice/{}/lines",
+        cfg.billing_group_id, invoice_id,
+    );
+    let response = reqwest_client
+        .get(&url)
+        .bearer_auth(cfg.aiven_api_token.clone())
+        .send()
+        .await?;
+    dbg!(&response);
+    let Ok(response_body) =
+        serde_json::from_str::<HashMap<String, serde_json::Value>>(&response.text().await?)
+    else {
+        bail!("Unable to parse json returned from: GET {url}")
+    };
+    dbg!(&response_body);
+    let Some(response_invoice_lines) = response_body
+        .get("lines")
+        .and_then(|invoices| invoices.as_array())
+    else {
+        bail!("Aiven's BillingGroup invoices API return doesn't follow expected structure")
+    };
+    Ok(response_invoice_lines.to_vec())
 }
 
-#[derive(Debug)]
-struct AivenInvoice {
-    pub(crate) id: String,
-    pub(crate) total_inc_vat: BigDecimal,
-    pub(crate) state: AivenInvoiceState,
-}
-
-impl AivenInvoice {
-    fn from_json_obj(obj: &serde_json::Value) -> Result<Self> {
-        let total_inc_vat_key = "total_inc_vat";
-        let Some(Some(total_inc_vat_json)) = obj.get(total_inc_vat_key).map(|s| s.as_str()) else {
-            bail!("Unable to find `{total_inc_vat_key}` in: {obj:?}")
-        };
-        // TODO: Verify this is correct, and we're not supposed to turn it into float first or something
-        let Ok(total_inc_vat) = BigDecimal::from_str_radix(total_inc_vat_json, 10) else {
-            bail!("Unable to parse as bigdecimal: '{total_inc_vat_json}'")
-        };
-
-        let invoice_number_key = "invoice_number";
-        let Some(Some(id)) = obj.get(invoice_number_key).map(|s| s.as_str()) else {
-            bail!("Unable to parse/find invoice's '{invoice_number_key}': {obj:?}")
-        };
-
-        let state_key = "state";
-        let Some(state_json) = obj.get(state_key) else {
-            bail!("Unable to find invoice's '{state_key}': {obj:?}")
-        };
-        let state = AivenInvoiceState::from_json_obj(state_json)?;
-
-        Ok(Self {
-            id: id.to_string(),
-            total_inc_vat,
-            state,
-        })
-    }
-
-    fn from_json_list(list: &[serde_json::Value]) -> Result<Vec<Self>> {
-        Ok(list.iter().flat_map(Self::from_json_obj).collect())
-    }
-}
+mod aiven;
+use aiven::{AivenInvoice, AivenInvoiceState};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -110,29 +105,36 @@ async fn main() -> Result<()> {
     let cfg = Cfg::new()?;
 
     let aiven_client = client()?;
-    let response = aiven_client
-        .get(&format!(
-            "https://api.aiven.io/v1/billing-group/{}/invoice",
-            cfg.billing_group_id
-        ))
-        .bearer_auth(cfg.aiven_api_token)
-        .send()
-        .await?;
-    let response_body: HashMap<String, Value> =
-        serde_json::from_str(&response.text().await?).unwrap();
-    let Some(response_invoices) = response_body
-        .get("invoices")
-        .and_then(|invoices| invoices.as_array())
-    else {
-        bail!("Aiven's BillingGroup invoices API return doesn't follow expected structure")
-    };
 
-    let invoices: Vec<_> = AivenInvoice::from_json_list(response_invoices)?;
+    let invoices: Vec<_> =
+        AivenInvoice::from_json_list(&get_aiven_billing_group(&aiven_client, &cfg).await?)?;
     let unpaid_invoices: Vec<_> = invoices
         .iter()
         .filter(|i| i.state != AivenInvoiceState::Paid)
         .collect();
-    dbg!(unpaid_invoices);
+    info!(
+        "fetch invoice details from aiven and insert into bigquery for {} invoices of a total of {}",
+        unpaid_invoices.len(),
+        invoices.len()
+    );
+    dbg!(&unpaid_invoices);
+
+    for invoice in unpaid_invoices {
+        let invoice_lines_response =
+            get_aiven_billing_group_invoice_list(&aiven_client, &cfg, &invoice.id).await?;
+        dbg!(&invoice_lines_response);
+
+        // TODO:
+        // 	invoiceLines, err := aivenClient.GetInvoiceLines(ctx, invoice)
+        // 	if err != nil {
+        // 		return fmt.Errorf("failed to get invoice details for invoice %s: %w", invoice.InvoiceId, err)
+        // 	}
+
+        // 	err = bqClient.InsertCostItems(ctx, invoiceLines)
+        // 	if err != nil {
+        // 		return fmt.Errorf("failed to insert cost item into bigquery: %w", err)
+        // 	}
+    }
 
     Ok(())
 }
