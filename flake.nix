@@ -17,38 +17,45 @@
 
   };
 
-  outputs = { self, nixpkgs, crane, flake-utils, advisory-db, ... }@inputs:
-
-    inputs.flake-utils.lib.eachDefaultSystem (system:
+  outputs =
+    inputs:
+    inputs.flake-utils.lib.eachDefaultSystem (
+      system:
       let
         pkgs = import inputs.nixpkgs { localSystem = { inherit system; }; };
         inherit (pkgs) lib;
 
-        craneLib = crane.mkLib pkgs;
+        craneLib = inputs.crane.mkLib pkgs;
         src = craneLib.cleanCargoSource ./kafka-cost;
 
         commonArgs = {
           inherit src;
           strictDeps = true;
-          buildInputs = [ ]
-            ++ lib.optionals pkgs.stdenv.isDarwin [ pkgs.libiconv ];
+          buildInputs = [ ] ++ lib.optionals pkgs.stdenv.isDarwin [ pkgs.libiconv ];
         };
 
         cargoArtifacts = craneLib.buildDepsOnly commonArgs;
 
-        kafka-cost =
-          craneLib.buildPackage (commonArgs // { inherit cargoArtifacts; });
+        kafka-cost = craneLib.buildPackage (commonArgs // { inherit cargoArtifacts; });
 
-      in {
+      in
+      {
         devShells.default = pkgs.mkShell {
-          packages = with pkgs; [ delve go ginkgo postgresql rust-analyzer ];
+          packages = with pkgs; [
+            go
+            rust-analyzer
+
+            # To install aiven's cli
+            pipx
+          ];
           inputsFrom = [ kafka-cost ];
         };
         formatter = inputs.treefmt-nix.lib.mkWrapper pkgs {
           programs.nixfmt.enable = true;
           programs.gofumpt.enable = true;
+          programs.rustfmt.enable = true;
         };
-        packages = { default = kafka-cost; };
-
-      });
+        packages.default = kafka-cost;
+      }
+    );
 }

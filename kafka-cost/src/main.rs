@@ -1,22 +1,20 @@
 use anyhow::Result;
-use tracing::info;
+use reqwest::{ClientBuilder, header};
+use serde_json::{Value, json};
 use std::collections::HashMap;
-use serde_json::{json, Value};
-use reqwest::{header, ClientBuilder};
+use tracing::info;
 
 pub fn init_tracing_subscriber() -> Result<()> {
-    tracing_subscriber::fmt()
-        .init();
+    tracing_subscriber::fmt().init();
     Ok(())
 }
 
-
-fn client(token: &str) -> Result<reqwest::Client>  {
+fn client(token: &str) -> Result<reqwest::Client> {
     reqwest::Client::builder()
-    .https_only(true).user_agent("nais-kafka-cost")
-        .build().map_err(anyhow::Error::msg)
-
-
+        .https_only(true)
+        .user_agent("nais-kafka-cost")
+        .build()
+        .map_err(anyhow::Error::msg)
 }
 
 #[derive(Debug)]
@@ -39,19 +37,24 @@ impl Cfg {
             bigquery_dataset: "kafka_team_cost".to_owned(),
             bigquery_table: "kafka_team_cost".to_owned(),
         })
+    }
 }
-
-}
-
 
 #[tokio::main]
-async fn main() -> Result<()>{
+async fn main() -> Result<()> {
     init_tracing_subscriber()?;
     info!("started kafka-cost");
     let cfg = Cfg::new()?;
     let aiven_client = client(&cfg.aiven_api_token)?;
 
-    let res = aiven_client.get(&format!("https://api.aiven.io/v1/billing-group/{}/invoice", cfg.billing_group_id)).bearer_auth(cfg.aiven_api_token).send().await?;
+    let res = aiven_client
+        .get(&format!(
+            "https://api.aiven.io/v1/billing-group/{}/invoice",
+            cfg.billing_group_id
+        ))
+        .bearer_auth(cfg.aiven_api_token)
+        .send()
+        .await?;
     let mut lookup: HashMap<String, Value> = serde_json::from_str(&res.text().await?).unwrap();
     dbg!(lookup);
     Ok(())
