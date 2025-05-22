@@ -58,12 +58,11 @@ async fn get_aiven_billing_group(
     else {
         bail!("Unable to parse json returned from: GET {url}")
     };
-    dbg!(&response_body);
     let Some(response_invoices) = response_body
         .get("invoices")
         .and_then(|invoices| invoices.as_array())
     else {
-        bail!("invoices")
+        bail!("Aiven's BillingGroup invoices API return doesn't follow expected structure")
     };
     Ok(response_invoices.to_vec())
 }
@@ -77,7 +76,6 @@ async fn get_aiven_billing_group_invoice_list(
         "https://api.aiven.io/v1/billing-group/{}/invoice/{}/lines",
         cfg.billing_group_id, invoice_id,
     );
-    dbg!(&url);
     let response = reqwest_client
         .get(&url)
         .bearer_auth(&cfg.aiven_api_token)
@@ -94,11 +92,13 @@ async fn get_aiven_billing_group_invoice_list(
         .get("lines")
         .and_then(|invoices| invoices.as_array())
     else {
-        bail!("invoice list")
+        bail!("Aiven's BillingGroup invoice's lines API return doesn't follow expected structure")
     };
     Ok(response_invoice_lines.to_vec())
 }
 
+mod aiven;
+use aiven::{AivenInvoice, AivenInvoiceState};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -108,12 +108,12 @@ async fn main() -> Result<()> {
     let bigquery_client = Client::from_application_default_credentials().await?;
     let aiven_client = client()?;
 
-    let invoices = get_aiven_billing_group(&aiven_client, &cfg).await?;
-    let unpaid_invoices: Vec<&serde_json::Value> = invoices
+    let invoices: Vec<_> =
+        AivenInvoice::from_json_list(&get_aiven_billing_group(&aiven_client, &cfg).await?)?;
+    let unpaid_invoices: Vec<_> = invoices
         .iter()
-        .filter(|i| i["state"].as_str() != Some("paid"))
+        .filter(|i| i.state != AivenInvoiceState::Paid)
         .collect();
-
     info!(
         "fetch invoice details from aiven and insert into bigquery for {} invoices of a total of {}",
         unpaid_invoices.len(),
@@ -121,16 +121,11 @@ async fn main() -> Result<()> {
     );
     dbg!(&unpaid_invoices);
 
-
     for invoice in unpaid_invoices {
-        if let Some(invoice_number) = invoice.get("invoice_number").and_then(|id| id.as_str()) {
-            let invoice_lines_response =
-                get_aiven_billing_group_invoice_list(&aiven_client, &cfg, invoice_number).await?;
-            dbg!(&invoice_lines_response);
-        } else {
-            bail!("invoice_number");
-        }
-    }
+        let invoice_lines_response =
+            get_aiven_billing_group_invoice_list(&aiven_client, &cfg, &invoice.id).await?;
+        dbg!(&invoice_lines_response);
+
         // TODO:
         // 	invoiceLines, err := aivenClient.GetInvoiceLines(ctx, invoice)
         // 	if err != nil {
@@ -141,5 +136,7 @@ async fn main() -> Result<()> {
         // 	if err != nil {
         // 		return fmt.Errorf("failed to insert cost item into bigquery: %w", err)
         // 	}
+    }
+
     Ok(())
 }
