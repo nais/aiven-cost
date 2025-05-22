@@ -187,9 +187,11 @@ async fn main() -> Result<()> {
 
             // TODO: Map from whatever AivenInvoiceLine struct we end up with to a BQ struct we add to the `bq_rows` vec
         }
+
         insert_request.add_rows(bq_rows)?;
     }
 
+    // TODO: Create table if it does not exist
     bigquery_client
         .tabledata()
         .insert_all(
