@@ -45,9 +45,7 @@
             go
             rust-analyzer
             cargo-watch
-
-            # To install aiven's cli
-            pipx
+            gopls
           ];
           inputsFrom = [ kafka-cost ];
         };

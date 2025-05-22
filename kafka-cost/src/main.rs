@@ -1,6 +1,8 @@
 use anyhow::{Result, bail};
+use gcp_bigquery_client::Client;
 use std::collections::HashMap;
 use tracing::info;
+
 
 pub fn init_tracing_subscriber() -> Result<()> {
     tracing_subscriber::fmt().init();
@@ -48,7 +50,7 @@ async fn get_aiven_billing_group(
     );
     let response = reqwest_client
         .get(&url)
-        .bearer_auth(cfg.aiven_api_token.clone())
+        .bearer_auth(&cfg.aiven_api_token)
         .send()
         .await?;
     let Ok(response_body) =
@@ -76,7 +78,7 @@ async fn get_aiven_billing_group_invoice_list(
     );
     let response = reqwest_client
         .get(&url)
-        .bearer_auth(cfg.aiven_api_token.clone())
+        .bearer_auth(&cfg.aiven_api_token)
         .send()
         .await?;
     dbg!(&response);
@@ -95,34 +97,32 @@ async fn get_aiven_billing_group_invoice_list(
     Ok(response_invoice_lines.to_vec())
 }
 
-mod aiven;
-use aiven::{AivenInvoice, AivenInvoiceState};
 
 #[tokio::main]
 async fn main() -> Result<()> {
     init_tracing_subscriber()?;
     info!("started kafka-cost");
     let cfg = Cfg::new()?;
-
+    let bigquery_client = Client::from_application_default_credentials().await?;
     let aiven_client = client()?;
 
-    let invoices: Vec<_> =
-        AivenInvoice::from_json_list(&get_aiven_billing_group(&aiven_client, &cfg).await?)?;
-    let unpaid_invoices: Vec<_> = invoices
-        .iter()
-        .filter(|i| i.state != AivenInvoiceState::Paid)
-        .collect();
-    info!(
-        "fetch invoice details from aiven and insert into bigquery for {} invoices of a total of {}",
-        unpaid_invoices.len(),
-        invoices.len()
-    );
-    dbg!(&unpaid_invoices);
+    // let invoices: Vec<_> =
+    //     AivenInvoice::from_json_list(&get_aiven_billing_group(&aiven_client, &cfg).await?)?;
+    // let unpaid_invoices: Vec<_> = invoices
+    //     .iter()
+    //     .filter(|i| i.state != AivenInvoiceState::Paid)
+    //     .collect();
+    // info!(
+    //     "fetch invoice details from aiven and insert into bigquery for {} invoices of a total of {}",
+    //     unpaid_invoices.len(),
+    //     invoices.len()
+    // );
+    // dbg!(&unpaid_invoices);
 
-    for invoice in unpaid_invoices {
-        let invoice_lines_response =
-            get_aiven_billing_group_invoice_list(&aiven_client, &cfg, &invoice.id).await?;
-        dbg!(&invoice_lines_response);
+    // for invoice in unpaid_invoices {
+    //     let invoice_lines_response =
+    //         get_aiven_billing_group_invoice_list(&aiven_client, &cfg, &invoice.id).await?;
+    //     dbg!(&invoice_lines_response);
 
         // TODO:
         // 	invoiceLines, err := aivenClient.GetInvoiceLines(ctx, invoice)
@@ -134,7 +134,5 @@ async fn main() -> Result<()> {
         // 	if err != nil {
         // 		return fmt.Errorf("failed to insert cost item into bigquery: %w", err)
         // 	}
-    }
-
     Ok(())
 }
