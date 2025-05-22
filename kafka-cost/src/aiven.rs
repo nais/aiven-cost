@@ -64,4 +64,4 @@ impl AivenInvoice {
     }
 }
 
-pub struct AivenInvoiceLines {}
+pub struct AivenInvoiceLine {}

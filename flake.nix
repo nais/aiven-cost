@@ -43,9 +43,10 @@
         devShells.default = pkgs.mkShell {
           packages = with pkgs; [
             go
+            gopls
             rust-analyzer
             cargo-watch
-            gopls
+            rustfmt
 
             # To install aiven's cli
             pipx

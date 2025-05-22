@@ -9,6 +9,7 @@ license = "MIT"
 [dependencies]
 anyhow = "1.0.98"
 bigdecimal = "0.4.8"
+chrono = "0.4.41"
 gcp-bigquery-client = "0.25.1"
 google-cloud-auth = "0.20.0"
 reqwest = { version = "0.12.15", features = ["json", "rustls-tls", "charset", "http2"], default-features = false}
