@@ -182,14 +182,11 @@ async fn main() -> Result<()> {
                 bail!("Unable to find `{timestamp_begin_key}` in invoice_line: {line:?}")
             };
             let time_invoice_line_begins = DateTime::parse_from_rfc3339(timestamp_begin)?;
+            // TODO: Continue w/extracting data from the invoice line, i.e. build up data source for what's to be sent to BQ
             todo!()
-        }
-        // TODO:
-        // 	invoiceLines, err := aivenClient.GetInvoiceLines(ctx, invoice)
-        // 	if err != nil {
-        // 		return fmt.Errorf("failed to get invoice details for invoice %s: %w", invoice.InvoiceId, err)
-        // 	}
 
+            // TODO: Map from whatever AivenInvoiceLine struct we end up with to a BQ struct we add to the `bq_rows` vec
+        }
         insert_request.add_rows(bq_rows)?;
     }
 
