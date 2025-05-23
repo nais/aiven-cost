@@ -1,4 +1,4 @@
-use anyhow::{Result, bail};
+use anyhow::{bail, Result};
 use bigdecimal::{BigDecimal, Num};
 
 #[derive(Debug, PartialEq, Eq)]
@@ -26,23 +26,23 @@ impl AivenInvoiceState {
 #[derive(Debug)]
 pub struct AivenInvoice {
     pub id: String,
-    pub total_inc_vat: BigDecimal,
+    pub total_inc_vat: String,
     pub state: AivenInvoiceState,
 }
 
 impl AivenInvoice {
     pub fn from_json_obj(obj: &serde_json::Value) -> Result<Self> {
         let total_inc_vat_key = "total_inc_vat";
-        let Some(Some(total_inc_vat_json)) = obj.get(total_inc_vat_key).map(|s| s.as_str()) else {
+        let Some(total_inc_vat) = obj.get(total_inc_vat_key).and_then(|s| s.as_str()) else {
             bail!("Unable to find `{total_inc_vat_key}` in: {obj:?}")
         };
         // TODO: Verify this is correct, and we're not supposed to turn it into float first or something
-        let Ok(total_inc_vat) = BigDecimal::from_str_radix(total_inc_vat_json, 10) else {
-            bail!("Unable to parse as bigdecimal: '{total_inc_vat_json}'")
-        };
+        // let Ok(total_inc_vat) = BigDecimal::from_str_radix(total_inc_vat_json, 10) else {
+        //     bail!("Unable to parse as bigdecimal: '{total_inc_vat_json}'")
+        // };
 
         let invoice_number_key = "invoice_number";
-        let Some(Some(id)) = obj.get(invoice_number_key).map(|s| s.as_str()) else {
+        let Some(id) = obj.get(invoice_number_key).and_then(|s| s.as_str()) else {
             bail!("Unable to parse/find invoice's '{invoice_number_key}': {obj:?}")
         };
 
@@ -54,7 +54,7 @@ impl AivenInvoice {
 
         Ok(Self {
             id: id.to_string(),
-            total_inc_vat,
+            total_inc_vat: total_inc_vat.to_string(),
             state,
         })
     }
@@ -62,6 +62,14 @@ impl AivenInvoice {
     pub fn from_json_list(list: &[serde_json::Value]) -> Result<Vec<Self>> {
         Ok(list.iter().flat_map(Self::from_json_obj).collect())
     }
+}
+
+pub struct KafkaLine {
+    pub timestamp_begin: String,
+    pub service_name: String,
+    pub project_name: String,
+    pub line_total_local: String,
+    pub local_currency: String,
 }
 
 pub struct AivenInvoiceLine {}
