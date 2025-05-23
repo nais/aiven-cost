@@ -1,9 +1,10 @@
 use anyhow::{Result, bail};
+use bigdecimal::{BigDecimal, FromPrimitive, Num, ParseBigDecimalError, Zero};
 use chrono::DateTime;
 use gcp_bigquery_client::{
     Client, model::table_data_insert_all_request::TableDataInsertAllRequest,
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use tracing::info;
 
 pub fn init_tracing_subscriber() -> Result<()> {
@@ -21,7 +22,7 @@ fn client() -> Result<reqwest::Client> {
         .map_err(anyhow::Error::msg)
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Cfg {
     pub aiven_api_token: String,
     pub billing_group_id: String,
@@ -44,15 +45,42 @@ impl Cfg {
     }
 }
 
+
+async fn get_aiven_topic_details(aiven_client: &reqwest::Client, cfg: &Cfg, project_name: &str, service_name: &str, topic_name: &str) -> Result<serde_json::Map<String, serde_json::Value>> {
+        let url = format!(
+            "https://api.aiven.io/v1/project/{project_name}/service/{service_name}/topic/{topic_name}"
+    );
+    let response = aiven_client
+        .get(&url)
+        .bearer_auth(&cfg.aiven_api_token)
+        .send()
+        .await?;
+    let response_status = &response.status();
+    let Ok(response_body) =
+        serde_json::from_str::<HashMap<String, serde_json::Value>>(&response.text().await?)
+    else {
+        bail!("Unable to parse json returned from: GET {response_status} {url}")
+    };
+    let Some(response_topic) = response_body
+        .get("topic")
+        .and_then(|topic| topic.as_object())
+    else {
+        bail!(
+            "Aiven's API returns json with missing field name:\n\t`invoices`\n\t\tGET {response_status} {url}"
+        )
+    };
+    Ok(response_topic.to_owned())
+}
+
 async fn get_aiven_billing_group(
-    reqwest_client: &reqwest::Client,
+    aiven_client: &reqwest::Client,
     cfg: &Cfg,
 ) -> Result<Vec<serde_json::Value>> {
     let url = format!(
         "https://api.aiven.io/v1/billing-group/{}/invoice",
         cfg.billing_group_id
     );
-    let response = reqwest_client
+    let response = aiven_client
         .get(&url)
         .bearer_auth(&cfg.aiven_api_token)
         .send()
@@ -105,14 +133,60 @@ async fn get_aiven_billing_group_invoice_list(
     Ok(response_invoice_lines.to_vec())
 }
 
-async fn get_aiven_service_tags(
-    reqwest_client: &reqwest::Client,
+async fn get_aiven_kafka_topics(
+    aiven_client: &reqwest::Client,
     cfg: &Cfg,
-    project_id: &str,
+    project_name: &str,
+    service_name: &str,
+) -> Result<Vec<serde_json::Value>> {
+    let url =
+        format!("https://api.aiven.io/v1/project/{project_name}/service/{service_name}/topic");
+    let response = aiven_client
+        .get(&url)
+        .bearer_auth(&cfg.aiven_api_token)
+        .send()
+        .await?;
+    let response_status = &response.status();
+    let Ok(mut response_body) = serde_json::from_str::<HashMap<String, serde_json::Value>>(
+        &(&response.text().await?).clone(),
+    ) else {
+        bail!("Unable to parse json returned from: GET {response_status} {url}")
+    };
+    let Some(response_topics) = response_body
+        .get_mut("topics")
+        .and_then(|topic| topic.as_array())
+    else {
+        bail!(
+            "Aiven's API returns json with missing field name:\n\t`tags`\n\t\tGET {response_status} {url}"
+        )
+    };
+
+    let mut rts = response_topics.to_owned();
+
+    rts.iter_mut().for_each(|t| {
+        let mut tt = t.as_object_mut();
+        tt.as_mut().map(|ttt| {
+            ttt.insert(
+                "service_name".to_string(),
+                serde_json::Value::String(service_name.to_string()),
+            );
+            ttt.insert(
+                "project_name".to_string(),
+                serde_json::Value::String(project_name.to_string()),
+            );
+        });
+    });
+    Ok(rts)
+}
+
+async fn get_aiven_service_tags(
+    aiven_client: &reqwest::Client,
+    cfg: &Cfg,
+    project_name: &str,
     service_name: &str,
 ) -> Result<serde_json::Map<String, serde_json::Value>> {
-    let url = format!("https://api.aiven.io/v1/project/{project_id}/service/{service_name}/tags");
-    let response = reqwest_client
+    let url = format!("https://api.aiven.io/v1/project/{project_name}/service/{service_name}/tags");
+    let response = aiven_client
         .get(&url)
         .bearer_auth(&cfg.aiven_api_token)
         .send()
@@ -129,7 +203,16 @@ async fn get_aiven_service_tags(
         )
     };
 
-    Ok(response_tags.to_owned())
+    let mut tags = response_tags.to_owned();
+    tags.insert(
+        "service_name".to_string(),
+        serde_json::Value::String(service_name.to_string()),
+    );
+    tags.insert(
+        "project_name".to_string(),
+        serde_json::Value::String(project_name.to_string()),
+    );
+    Ok(tags)
 }
 
 mod aiven;
@@ -143,22 +226,20 @@ async fn main() -> Result<()> {
     let aiven_client = client()?;
     let bigquery_client = Client::from_application_default_credentials().await?;
 
-    let data = extract(&aiven_client, &cfg).await?;
-    // TODO: Create table if it does not exist
-    // bigquery_client
-    //     .tabledata()
-    //     .insert_all(
-    //         &cfg.bigquery_project_id,
-    //         &cfg.bigquery_dataset,
-    //         &cfg.bigquery_table,
-    //         insert_request,
-    //     )
-    //     .await?;
+    let (topics, tags, kafka_lines) = extract(&aiven_client, &cfg).await?;
+    let data = transform(topics, tags, kafka_lines);
 
     Ok(())
 }
 
-async fn extract(aiven_client: &reqwest::Client, cfg: &Cfg) -> Result<()> {
+async fn extract(
+    aiven_client: &reqwest::Client,
+    cfg: &Cfg,
+) -> Result<(
+    Vec<serde_json::Value>,
+    Vec<serde_json::Map<String, serde_json::Value>>,
+    Vec<KafkaLine>,
+)> {
     let invoices: Vec<_> =
         AivenInvoice::from_json_list(&get_aiven_billing_group(&aiven_client, &cfg).await?)?;
     let unpaid_invoices: Vec<_> = invoices
@@ -173,14 +254,13 @@ async fn extract(aiven_client: &reqwest::Client, cfg: &Cfg) -> Result<()> {
 
     dbg!(&unpaid_invoices);
 
-    // let mut data = Vec::new();
     let mut kafka_cost = Vec::new();
+    let mut tags = Vec::new();
+    let mut topics = Vec::new();
     for invoice in unpaid_invoices {
         let invoice_lines_response =
             get_aiven_billing_group_invoice_list(&aiven_client, &cfg, &invoice.id).await?;
-        // dbg!(&invoice_lines_response);
-        // topic_data_consumption
-        // remote_storage_cost
+        dbg!(&invoice_lines_response);
         for line in invoice_lines_response {
             if let Some("kafka") = line.get("service_type").and_then(|s| s.as_str()) {
                 dbg!(&line);
@@ -199,15 +279,25 @@ async fn extract(aiven_client: &reqwest::Client, cfg: &Cfg) -> Result<()> {
                     bail!("Unable to find `{timestamp_begin_key}` in invoice_line: {line:?}")
                 };
                 let time_invoice_line_begins = DateTime::parse_from_rfc3339(timestamp_begin)?;
-                // TODO: Continue w/extracting data from the invoice line, i.e. build up data source for what's to be transformed
 
-                let Some(line_total_local) = line.get("line_total_local").and_then(|s| s.as_str()) else {
+                let Some(line_total_local) = line.get("line_total_local").and_then(|s| s.as_str())
+                else {
                     todo!();
                 };
-                let Some(local_currency) = line.get("local_currency").and_then(|s| s.as_str()) else {
+                let Some(local_currency) = line.get("local_currency").and_then(|s| s.as_str())
+                else {
                     todo!();
                 };
 
+               topics =
+                   get_aiven_kafka_topics(aiven_client, cfg, project_name, service_name).await?;
+
+
+               tags.push(
+                   get_aiven_service_tags(aiven_client, cfg, project_name, service_name).await?,
+               );
+
+                // this is only accidentally a datatype
                 kafka_cost.push(KafkaLine {
                     timestamp_begin: timestamp_begin.into(),
                     service_name: service_name.into(),
@@ -218,16 +308,59 @@ async fn extract(aiven_client: &reqwest::Client, cfg: &Cfg) -> Result<()> {
             }
         }
     }
-    Ok(())
+    Ok((topics, tags, kafka_cost))
 }
 
-fn transform() {}
+fn transform(
+    topics: Vec<serde_json::Value>,
+    tags: Vec<serde_json::Map<String, serde_json::Value>>,
+    kafka_lines: Vec<KafkaLine>,
+) {
+    let total_kafka_cost = kafka_lines
+        .iter() // string -> Result<(bd)>
+        .flat_map(|l| BigDecimal::from_str_radix(&l.line_total_local, 10))
+        .fold(BigDecimal::zero(), |acc, item| acc + item);
 
-fn load() {}
+    let teams: HashSet<_>= topics
+        .iter()
+        .flat_map(|topic| topic.get("topic_name").and_then(|i| i.as_str()))
+        .flat_map(|i| {
+            i.splitn(1, ".").take(1)
+        }).collect();
+
+    let topic_size: HashSet<_>= topics
+        .iter()
+        .flat_map(|topic| topic.get("topic_name").and_then(|i| i.as_str()))
+        .flat_map(|i| {
+            i.splitn(1, ".").take(1)
+        }).collect();
+
+
+    let number_of_teams = topics
+        .iter()
+        .flat_map(|topic| topic.get("topic_name").and_then(|i| i.as_str()))
+        .flat_map(|i| {
+            i.splitn(1, ".").take(1)
+        }).collect::<HashSet<_>>().len();
+
+
+    let team_cost = BigDecimal::half(&total_kafka_cost) / BigDecimal::from_usize(number_of_teams).unwrap();
+
+    // let disk_rate =
+    // let weighted_team_cost = BigDecimal::half(&total_kafka_cost) * disk_rate
+
+}
 
 fn smear() {
     // let basis_cost = kafka_cluster_cost
-    // let teamcost = 0.5*basis_cost/(number_of_teams)
-    //     + (0.5*basis_cost*(extra_disk_space_cost/topicsdataconsumption)
+                          // V teamcost
+
+    // let teamcost =
+           // V is invoice data
+    0.5*basis_cost/(number_of_teams)
+                                 // V topic
+    //     + (0.5*basis_cost*(used_disk/topicsdataconsumption)
     //     + remote_storage_cost_for_team_topics
 }
+
+fn load() {}
