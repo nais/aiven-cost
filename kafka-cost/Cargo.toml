@@ -7,14 +7,15 @@ license = "MIT"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-anyhow = "1.0.98"
-bigdecimal = "0.4.8"
-chrono = "0.4.41"
-gcp-bigquery-client = "0.25.1"
-google-cloud-auth = "0.20.0"
-reqwest = { version = "0.12.15", features = ["json", "rustls-tls", "charset", "http2"], default-features = false}
-serde = { version = "1.0.219", features = ["derive"] }
-serde_json = "1.0.140"
-tokio = { version = "1.45.0", features = ["full", "tracing"] }
-tracing = "0.1.41"
-tracing-subscriber = "0.3.19"
+anyhow = "1"
+bigdecimal = { version = "0.4.8", features = ["serde-json"] }
+chrono = { version = "0.4", features = ["serde"] }
+futures-util = "0.3"
+gcp-bigquery-client = "0.25"
+google-cloud-auth = "0.20"
+reqwest = { version = "0.12", features = ["json", "rustls-tls", "charset", "http2"], default-features = false}
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full", "tracing"] }
+tracing = "0.1"
+tracing-subscriber = "0.3"

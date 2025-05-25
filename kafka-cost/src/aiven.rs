@@ -1,75 +1,224 @@
-use anyhow::{bail, Result};
-use bigdecimal::{BigDecimal, Num};
+use std::collections::HashMap;
 
-#[derive(Debug, PartialEq, Eq)]
+use anyhow::{Result, bail};
+use bigdecimal::BigDecimal;
+use chrono::{DateTime, Utc};
+use serde::Deserialize;
+use tracing::info;
+
+mod kafka_instance;
+mod kafka_topic;
+use self::kafka_instance::AivenApiKafka;
+use crate::Cfg;
+
+#[derive(Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
 pub enum AivenInvoiceState {
     Paid,
     Mailed,
     Estimate,
 }
 
-impl AivenInvoiceState {
-    pub fn from_json_obj(obj: &serde_json::Value) -> Result<Self> {
-        let Some(json_string) = obj.as_str() else {
-            bail!("Unable to parse as str: {obj:?}")
-        };
-        let result = match json_string {
-            "paid" => Self::Paid,
-            "mailed" => Self::Mailed,
-            "estimate" => Self::Estimate,
-            _ => bail!("Unknown state: '{json_string}'"),
-        };
-        Ok(result)
-    }
-}
-
-#[derive(Debug)]
+#[derive(Debug, Deserialize)]
 pub struct AivenInvoice {
+    #[serde(rename(deserialize = "invoice_number"))]
     pub id: String,
     pub total_inc_vat: String,
     pub state: AivenInvoiceState,
 }
 
 impl AivenInvoice {
-    pub fn from_json_obj(obj: &serde_json::Value) -> Result<Self> {
-        let total_inc_vat_key = "total_inc_vat";
-        let Some(total_inc_vat) = obj.get(total_inc_vat_key).and_then(|s| s.as_str()) else {
-            bail!("Unable to find `{total_inc_vat_key}` in: {obj:?}")
+    pub fn from_json_obj(input: &serde_json::Value) -> Result<Self> {
+        let result = match serde_json::from_value(input.clone()) {
+            Ok(line) => line,
+            Err(e) => bail!(
+                "Unable to parse json into expected data structure: {}: {:#?}",
+                e,
+                input
+            ),
         };
-        // TODO: Verify this is correct, and we're not supposed to turn it into float first or something
-        // let Ok(total_inc_vat) = BigDecimal::from_str_radix(total_inc_vat_json, 10) else {
-        //     bail!("Unable to parse as bigdecimal: '{total_inc_vat_json}'")
-        // };
-
-        let invoice_number_key = "invoice_number";
-        let Some(id) = obj.get(invoice_number_key).and_then(|s| s.as_str()) else {
-            bail!("Unable to parse/find invoice's '{invoice_number_key}': {obj:?}")
-        };
-
-        let state_key = "state";
-        let Some(state_json) = obj.get(state_key) else {
-            bail!("Unable to find invoice's '{state_key}': {obj:?}")
-        };
-        let state = AivenInvoiceState::from_json_obj(state_json)?;
-
-        Ok(Self {
-            id: id.to_string(),
-            total_inc_vat: total_inc_vat.to_string(),
-            state,
-        })
+        Ok(result)
     }
 
     pub fn from_json_list(list: &[serde_json::Value]) -> Result<Vec<Self>> {
-        Ok(list.iter().flat_map(Self::from_json_obj).collect())
+        list.iter().map(Self::from_json_obj).collect()
+    }
+
+    pub async fn from_aiven_api(aiven_client: &reqwest::Client, cfg: &Cfg) -> Result<Vec<Self>> {
+        let url = format!(
+            "https://api.aiven.io/v1/billing-group/{}/invoice",
+            cfg.billing_group_id
+        );
+        let response = aiven_client
+            .get(&url)
+            .bearer_auth(&cfg.aiven_api_token)
+            .send()
+            .await?;
+        let response_status = &response.status();
+        let Ok(response_body) =
+            serde_json::from_str::<HashMap<String, serde_json::Value>>(&response.text().await?)
+        else {
+            bail!("Unable to parse json returned from: GET {response_status} {url}")
+        };
+        let Some(response_invoices) = response_body
+            .get("invoices")
+            .and_then(|invoices| invoices.as_array())
+        else {
+            bail!(
+                "Aiven's API returns json with missing field name:\n\t`invoices`\n\t\tGET {response_status} {url}"
+            )
+        };
+        info!(
+            "Collected {} invoice(s) from Aiven's API",
+            &response_invoices.len()
+        );
+        Self::from_json_list(response_invoices)
     }
 }
 
-pub struct KafkaLine {
-    pub timestamp_begin: String,
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq)]
+pub enum KafkaInvoiceLineCostType {
+    #[default]
+    Base,
+    TieredStorage,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct AivenApiKafkaInvoiceLine {
+    #[serde(skip)]
+    pub cost_type: KafkaInvoiceLineCostType,
+    pub timestamp_begin: DateTime<Utc>,
     pub service_name: String,
     pub project_name: String,
-    pub line_total_local: String,
+    #[serde(skip)]
+    pub kafka_instance: AivenApiKafka,
+    pub line_total_local: BigDecimal,
     pub local_currency: String,
 }
 
-pub struct AivenInvoiceLine {}
+impl AivenApiKafkaInvoiceLine {
+    pub fn from_json_obj(obj: &serde_json::Value) -> Result<Self> {
+        let mut result: Self = match serde_json::from_value(obj.clone()) {
+            Ok(line) => line,
+            Err(e) => bail!(
+                "Unable to parse json into expected data structure: {}: {:#?}",
+                e,
+                obj
+            ),
+        };
+        let Some(description) = obj.get("description").and_then(serde_json::Value::as_str) else {
+            todo!()
+        };
+        result.cost_type = KafkaInvoiceLineCostType::Base;
+        if description
+            .to_lowercase()
+            .contains(": kafka tiered storage")
+        {
+            result.cost_type = KafkaInvoiceLineCostType::TieredStorage;
+        }
+        Ok(result)
+    }
+
+    pub fn from_json_list(list: &[&serde_json::Value]) -> Result<Vec<Self>> {
+        list.iter().map(|obj| Self::from_json_obj(obj)).collect()
+    }
+
+    pub async fn populate_with_topics_from_aiven_api(
+        mut self,
+        reqwest_client: &reqwest::Client,
+        cfg: &Cfg,
+    ) -> Result<Self> {
+        self.kafka_instance
+            .populate_with_topics_from_aiven_api(reqwest_client, cfg)
+            .await?;
+        Ok(self)
+    }
+
+    pub async fn populate_with_tags_from_aiven_api(
+        &mut self,
+        reqwest_client: &reqwest::Client,
+        cfg: &Cfg,
+    ) -> Result<Self> {
+        self.kafka_instance = AivenApiKafka::from_aiven_api(
+            reqwest_client,
+            cfg,
+            &self.project_name,
+            &self.service_name,
+        )
+        .await?;
+        Ok(self.to_owned())
+    }
+
+    pub async fn from_aiven_api(
+        reqwest_client: &reqwest::Client,
+        cfg: &Cfg,
+        invoice_id: &str,
+    ) -> Result<Vec<Self>> {
+        let url = format!(
+            "https://api.aiven.io/v1/billing-group/{}/invoice/{}/lines",
+            cfg.billing_group_id, invoice_id,
+        );
+        let response = reqwest_client
+            .get(&url)
+            .bearer_auth(&cfg.aiven_api_token)
+            .send()
+            .await?;
+        let response_status = &response.status();
+        let Ok(response_body) =
+            serde_json::from_str::<HashMap<String, serde_json::Value>>(&(response.text().await?))
+        else {
+            bail!("Unable to parse json returned from: GET {response_status} {url}")
+        };
+        let Some(response_invoice_lines) = response_body
+            .get("lines")
+            .and_then(|invoices| invoices.as_array())
+        else {
+            bail!(
+                "Aiven's API returns json with missing field name:\n\t`lines`\n\t\tGET {response_status} {url}"
+            )
+        };
+        // dbg!(&response_invoice_lines.len());
+
+        // Keep only Kafka related invoices
+        let kafka_invoice_lines: Vec<_> = response_invoice_lines
+            .iter()
+            .filter(|line| {
+                line.get("service_type").and_then(serde_json::Value::as_str) == Some("kafka")
+            })
+            .collect();
+        info!(
+            "Invoice ID {invoice_id} had {} line(s), of which {} were kafka related",
+            &response_invoice_lines.len(),
+            &kafka_invoice_lines.len()
+        );
+
+        Self::from_json_list(&kafka_invoice_lines)
+    }
+}
+
+pub async fn get_tags_of_aiven_service(
+    reqwest_client: &reqwest::Client,
+    cfg: &Cfg,
+    project_name: &str,
+    service_name: &str,
+) -> Result<serde_json::Value> {
+    let url =
+        format!("https://api.aiven.io/v1/project/{project_name}/service/{service_name}/tags",);
+    let response = reqwest_client
+        .get(&url)
+        .bearer_auth(&cfg.aiven_api_token)
+        .send()
+        .await?;
+    let response_status = &response.status();
+    let Ok(response_body) =
+        serde_json::from_str::<HashMap<String, serde_json::Value>>(&(response.text().await?))
+    else {
+        bail!("Unable to parse json returned from: GET {response_status} {url}")
+    };
+    let Some(response_tags) = response_body.get("tags") else {
+        bail!(
+            "Aiven's API returns json with missing field name:\n\t`tags`\n\t\tGET {response_status} {url}"
+        )
+    };
+    Ok(response_tags.clone())
+}

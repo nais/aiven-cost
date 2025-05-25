@@ -46,6 +46,7 @@
             gopls
             rust-analyzer
             cargo-watch
+            clippy
             rustfmt
 
             # To install aiven's cli
