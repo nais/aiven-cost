@@ -159,17 +159,78 @@ fn transform(
                     .kafka_instance
                     .topics
                     .iter()
-                    .flat_map(|t| t.name.splitn(2, '.'))
+                    .flat_map(|t| t.name.splitn(2, '.').nth(0))
                     .collect(),
             )
         })
         .collect();
+
+    #[derive(Hash, Eq, PartialEq, Debug, Clone)]
+    struct Key {
+        tenant: String,
+        environment: String,
+        kafka_instance: String,
+        team: String,
+    }
+    #[derive(Eq, PartialEq, Debug, Clone)]
+    struct Value {
+        base_size: u64,
+        tiered_size: u64,
+    }
+
+    let mut tenants: HashMap<Key, Value> = HashMap::new();
+    kafka_base_cost_lines
+        .iter()
+        .map(|line| {
+            (
+                line.kafka_instance.tenant.clone(),
+                line.kafka_instance.environment.clone(),
+                line.kafka_instance.service_name.clone(),
+                line.kafka_instance.topics.clone(),
+            )
+        })
+        .for_each(|(tenant, environment, kafka_instance, topics)| {
+            topics
+                .iter()
+                .map(|topic| {
+                    (
+                        topic.name.splitn(2, '.').nth(0).unwrap(),
+                        topic
+                            .partitions
+                            .iter()
+                            .map(|partition| (partition.size, partition.remote_size.unwrap_or(0)))
+                            .collect::<Vec<(u64, u64)>>(),
+                    )
+                })
+                .for_each(|(team, values)| {
+                    let base_size: u64 = values.iter().map(|(base_size, _)| base_size).sum();
+                    let tiered_size: u64 = values.iter().map(|(_, tiered_size)| tiered_size).sum();
+
+                    let sizes = tenants
+                        .entry(Key {
+                            tenant: tenant.clone(),
+                            environment: environment.clone(),
+                            kafka_instance: kafka_instance.clone(),
+                            team: team.to_string(),
+                        })
+                        .or_insert_with(|| Value {
+                            base_size: 0,
+                            tiered_size: 0,
+                        });
+                    sizes.base_size += base_size;
+                    sizes.tiered_size += tiered_size;
+                });
+        });
+
+    dbg!(tenants);
+
     for (tenant, teams) in teams_per_tenant {
         info!(
             "Tenant '{tenant}' has {} unique team names across environments",
             teams.len()
         );
     }
+
     // let topic_size: HashSet<_> = topics
     //     .iter()
     //     .filter_map(|topic| topic.get("topic_name").and_then(|i| i.as_str()))

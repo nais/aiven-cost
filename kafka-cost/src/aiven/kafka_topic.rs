@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 
 use anyhow::{Result, bail};
-use bigdecimal::BigDecimal;
 use futures_util::future::try_join_all;
 use serde::Deserialize;
 
@@ -20,9 +19,9 @@ pub struct AivenApiKafkaTopicPartition {
     #[serde(rename = "partition")]
     pub partition_number: u32,
     /// In bytes according to the Aiven API
-    pub remote_size: Option<BigDecimal>,
+    pub remote_size: Option<u64>,
     /// In bytes according to the Aiven API
-    pub size: BigDecimal,
+    pub size: u64,
 }
 
 // Need to subtract this:
