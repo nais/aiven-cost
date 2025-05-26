@@ -124,6 +124,7 @@ async fn extract(
         "Unable to find kafka instance tiered storage belongs to",
     );
     dbg!(&kafka_invoice_lines.len());
+    dbg!(&kafka_invoice_lines[0]);
 
     Ok((
         try_join_all(
@@ -172,13 +173,75 @@ fn transform(
         kafka_instance: String,
         team: String,
     }
+
+    struct TenantEnv {
+        tenant: String,
+        environment: String,
+        kafkas: HashMap<String, KafkaInstance>,
+    }
+
+    type TeamName = String;
+    struct KafkaInstance {
+        data_usage: DataUsage,
+        teams: HashMap<TeamName, DataUsage>,
+    }
+
     #[derive(Eq, PartialEq, Debug, Clone)]
-    struct Value {
+    struct DataUsage {
         base_size: u64,
         tiered_size: u64,
     }
 
-    let mut tenants: HashMap<Key, Value> = HashMap::new();
+    let tenants: Vec<TenantEnv> = kafka_base_cost_lines
+        .iter()
+        .map(|h| {
+            let mut kafkas = HashMap::new();
+            kafkas.insert(
+                h.kafka_instance.service_name.clone(),
+                KafkaInstance {
+                    data_usage: DataUsage {
+                        base_size: 0,
+                        tiered_size: 0,
+                    },
+                    teams: h
+                        .kafka_instance
+                        .topics
+                        .iter()
+                        .map(|topic| {
+                            (
+                                topic.name.splitn(2, '.').nth(0).unwrap().to_owned(),
+                                topic
+                                    .partitions
+                                    .iter()
+                                    .map(|partition| {
+                                        (partition.size, partition.remote_size.unwrap_or(0))
+                                    })
+                                    .fold(
+                                        DataUsage {
+                                            base_size: 0,
+                                            tiered_size: 0,
+                                        },
+                                        |mut acc, (base, tiered)| {
+                                            acc.base_size += base;
+                                            acc.tiered_size += tiered;
+                                            acc
+                                        },
+                                    ),
+                            )
+                        })
+                        .collect::<HashMap<String, DataUsage>>(),
+                },
+            );
+
+            TenantEnv {
+                tenant: h.kafka_instance.tenant.clone(),
+                environment: h.kafka_instance.environment.clone(),
+                kafkas,
+            }
+        })
+        .collect();
+
+    let mut old_tenants: HashMap<Key, DataUsage> = HashMap::new();
     kafka_base_cost_lines
         .iter()
         .map(|line| {
@@ -206,14 +269,14 @@ fn transform(
                     let base_size: u64 = values.iter().map(|(base_size, _)| base_size).sum();
                     let tiered_size: u64 = values.iter().map(|(_, tiered_size)| tiered_size).sum();
 
-                    let sizes = tenants
+                    let sizes = old_tenants
                         .entry(Key {
                             tenant: tenant.clone(),
                             environment: environment.clone(),
                             kafka_instance: kafka_instance.clone(),
                             team: team.to_string(),
                         })
-                        .or_insert_with(|| Value {
+                        .or_insert_with(|| DataUsage {
                             base_size: 0,
                             tiered_size: 0,
                         });
@@ -222,7 +285,7 @@ fn transform(
                 });
         });
 
-    dbg!(tenants);
+    dbg!(old_tenants);
 
     for (tenant, teams) in teams_per_tenant {
         info!(
@@ -230,6 +293,33 @@ fn transform(
             teams.len()
         );
     }
+
+    // BigQuery(aiven_cost_regional.cost_items): billing_group_id, invoice_id, project_name, environment, team, service, service_name, tenant, status, cost, currency, date, number_of_days
+    // BigQuery(aiven_cost_regional.cost_team): billing_group_id, invoice_id, project_name, environment, team, service(kafka_team), service_name(kafka-instance), tenant, status, cost, cost_type(base|tiered), currency, date, number_of_days
+
+    // hash(key(tenant, env), value({}instance(key(instance_name), value([]teams(base_size, tiered_size)))))
+
+    // bqlines = []
+    //
+    // for tenants
+    //   let cost
+    //
+    //   for env
+    //    let env_cost
+    //
+    //    for kafka
+    //      let kafka_cost
+    //      let base_size = iter
+    //      let tiered_size = iter
+    //
+    //      let base_cost_kroner = (kafka_cost/2)/#kafka.teams
+    //      let base_storage_kroner = (kafka_cost/2)/base_size
+    //
+    //      for teams
+    //        team_kost = base_cost_kroner + (base_storage_kroner * team.base_size)
+    //        // TODO: tiered
+    //
+    //        bqlines.insert(tenant, env, kafka, team, team_kost)
 
     // let topic_size: HashSet<_> = topics
     //     .iter()
