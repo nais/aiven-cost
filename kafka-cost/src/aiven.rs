@@ -23,7 +23,8 @@ pub enum AivenInvoiceState {
 pub struct AivenInvoice {
     #[serde(rename(deserialize = "invoice_number"))]
     pub id: String,
-    pub total_inc_vat: String,
+    // pub total_inc_vat: String, // TODO: Comment back in only if we want to double-check that all the lines add up correctly
+    pub billing_group_id: String,
     pub state: AivenInvoiceState,
 }
 
@@ -94,6 +95,7 @@ pub struct AivenApiKafkaInvoiceLine {
     pub kafka_instance: AivenApiKafka,
     pub line_total_local: BigDecimal,
     pub local_currency: String,
+    pub invoice_id: String,
 }
 
 impl AivenApiKafkaInvoiceLine {
@@ -106,8 +108,9 @@ impl AivenApiKafkaInvoiceLine {
                 obj
             ),
         };
-        let Some(description) = obj.get("description").and_then(serde_json::Value::as_str) else {
-            todo!()
+        let key = "description";
+        let Some(description) = obj.get(key).and_then(serde_json::Value::as_str) else {
+            bail!("Aiven's API returns json with missing field name:\n\t`{key}`\n\t\t{obj:#?}")
         };
         result.cost_type = KafkaInvoiceLineCostType::Base;
         if description
@@ -119,7 +122,7 @@ impl AivenApiKafkaInvoiceLine {
         Ok(result)
     }
 
-    pub fn from_json_list(list: &[&serde_json::Value]) -> Result<Vec<Self>> {
+    pub fn from_json_list(list: &[&mut serde_json::Value]) -> Result<Vec<Self>> {
         list.iter().map(|obj| Self::from_json_obj(obj)).collect()
     }
 
@@ -180,12 +183,22 @@ impl AivenApiKafkaInvoiceLine {
         // dbg!(&response_invoice_lines.len());
 
         // Keep only Kafka related invoices
-        let kafka_invoice_lines: Vec<_> = response_invoice_lines
-            .iter()
+        let mut copy = response_invoice_lines.clone();
+        let kafka_invoice_lines: Vec<_> = copy
+            .iter_mut()
             .filter(|line| {
                 line.get("service_type").and_then(serde_json::Value::as_str) == Some("kafka")
             })
-            .collect();
+            .map(|json| {
+                if let Some(map) = json.as_object_mut() {
+                    map.insert("invoice_id".to_string(), serde_json::to_value(invoice_id)?);
+                }
+
+                Ok(json)
+            })
+            // .cloned()
+            .collect::<Result<Vec<_>>>()?;
+
         info!(
             "Invoice ID {invoice_id} had {} line(s), of which {} were kafka related",
             &response_invoice_lines.len(),

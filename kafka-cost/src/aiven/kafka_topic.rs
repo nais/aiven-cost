@@ -15,9 +15,6 @@ pub enum AivenApiKafkaTopicState {
 
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct AivenApiKafkaTopicPartition {
-    /// ID of the partition
-    #[serde(rename = "partition")]
-    pub partition_number: u32,
     /// In bytes according to the Aiven API
     pub remote_size: Option<u64>,
     /// In bytes according to the Aiven API
@@ -65,7 +62,7 @@ struct AivenApiKafkaTopicSpecificData {
 //   url: 'https://api.aiven.io/v1/project/%7Bproject%7D/service/%7Bservice_name%7D/topic',
 impl AivenApiKafkaTopic {
     pub fn from_json_obj(input: &serde_json::Value) -> Result<Self> {
-        let mut result = match serde_json::from_value(input.clone()) {
+        let result = match serde_json::from_value(input.clone()) {
             Ok(line) => line,
             Err(e) => bail!(
                 "Unable to parse json into expected data structure: {}: {:#?}",

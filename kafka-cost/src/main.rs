@@ -1,11 +1,13 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
-use anyhow::Result;
-use bigdecimal::{BigDecimal, Zero};
+use anyhow::{Result, bail};
+use bigdecimal::{BigDecimal, FromPrimitive, Zero};
+use chrono::{DateTime, Utc};
 use futures_util::future::try_join_all;
 use gcp_bigquery_client::{
     Client, model::table_data_insert_all_request::TableDataInsertAllRequest,
 };
+use serde::Serialize;
 use tracing::info;
 
 pub fn init_tracing_subscriber() -> Result<()> {
@@ -62,7 +64,13 @@ async fn main() -> Result<()> {
     dbg!(&kafka_base_cost_lines.len());
     // dbg!(&kafka_base_cost_lines[0]);
     // todo!();
-    let data = transform(&kafka_base_cost_lines, &kafka_base_tiered_storage_lines);
+    let data = transform(
+        &cfg.billing_group_id,
+        &kafka_base_cost_lines,
+        &kafka_base_tiered_storage_lines,
+    )?;
+
+    load(&bigquery_client, &data)?;
 
     Ok(())
 }
@@ -140,206 +148,174 @@ async fn extract(
     ))
 }
 
-struct BigQueryTableRow {}
+#[derive(Serialize)]
+struct BigQueryTableRowData {
+    billing_group_id: String,
+    invoice_id: String,
+    project_name: String,
+    environment: String,
+    team: String,
+    service: String,
+    service_name: String,
+    tenant: String,
+    status: String,
+    cost: BigDecimal,
+    currency: String,
+    date: DateTime<Utc>,
+    number_of_days: u8,
+}
 
 fn transform(
+    billing_group_id: &str,
     kafka_base_cost_lines: &[AivenApiKafkaInvoiceLine],
     kafka_tiered_storage_cost_lines: &[AivenApiKafkaInvoiceLine],
-) -> Result<Vec<BigQueryTableRow>> {
-    let total_kafka_cost = kafka_base_cost_lines
-        .iter() // string -> Result<(bd)>
-        .map(|l| &l.line_total_local)
-        .fold(BigDecimal::zero(), |acc, item| acc + item);
-
-    let teams_per_tenant: HashMap<String, HashSet<_>> = kafka_base_cost_lines
-        .iter()
-        .map(|kafka_line_item| {
-            (
-                kafka_line_item.kafka_instance.tenant.clone(),
-                kafka_line_item
-                    .kafka_instance
-                    .topics
-                    .iter()
-                    .flat_map(|t| t.name.splitn(2, '.').nth(0))
-                    .collect(),
-            )
-        })
-        .collect();
-
+) -> Result<TableDataInsertAllRequest> {
     #[derive(Hash, Eq, PartialEq, Debug, Clone)]
-    struct Key {
-        tenant: String,
-        environment: String,
-        kafka_instance: String,
-        team: String,
-    }
-
     struct TenantEnv {
         tenant: String,
         environment: String,
-        kafkas: HashMap<String, KafkaInstance>,
+        project_name: String,
     }
 
     type TeamName = String;
+    type KafkaInstanceName = String;
     struct KafkaInstance {
-        data_usage: DataUsage,
+        base_cost: BigDecimal,
+        tiered_cost: BigDecimal,
+        aggregate_data_usage: DataUsage,
         teams: HashMap<TeamName, DataUsage>,
+        currency: String,
+        invoice_id: String,
     }
 
-    #[derive(Eq, PartialEq, Debug, Clone)]
+    #[derive(Eq, PartialEq, Debug, Default, Clone)]
     struct DataUsage {
         base_size: u64,
         tiered_size: u64,
     }
+    // let foo: HashMap<TenantEnv, HashMap<KafkaInstanceName, KafkaInstance>> = HashMap::new();
+    let mut tenant_envs: HashMap<TenantEnv, HashMap<KafkaInstanceName, KafkaInstance>> =
+        HashMap::new();
+    for line in kafka_base_cost_lines {
+        // Get existing TenantEnv's HashMap of kafka instances if it exists
+        let tenant_key = TenantEnv {
+            tenant: line.kafka_instance.tenant.clone(),
+            environment: line.kafka_instance.environment.clone(),
+            project_name: line.project_name.clone(),
+        };
+        let kafka_instances = tenant_envs
+            .entry(tenant_key)
+            .or_insert_with(|| HashMap::new());
 
-    let tenants: Vec<TenantEnv> = kafka_base_cost_lines
-        .iter()
-        .map(|h| {
-            let mut kafkas = HashMap::new();
-            kafkas.insert(
-                h.kafka_instance.service_name.clone(),
-                KafkaInstance {
-                    data_usage: DataUsage {
+        // Sum up all topics' sizes per team
+        let teams = line
+            .kafka_instance
+            .topics
+            .iter()
+            .map(|topic| {
+                (
+                    topic.name.splitn(2, '.').nth(0).unwrap().to_owned(),
+                    topic
+                        .partitions
+                        .iter()
+                        .map(|partition| (partition.size, partition.remote_size.unwrap_or(0)))
+                        .fold(
+                            DataUsage {
+                                base_size: 0,
+                                tiered_size: 0,
+                            },
+                            |mut acc, (base, tiered)| {
+                                acc.base_size += base;
+                                acc.tiered_size += tiered;
+                                acc
+                            },
+                        ),
+                )
+            })
+            .collect::<HashMap<String, DataUsage>>();
+
+        // Insert data into collector variable
+        kafka_instances.insert(
+            line.service_name.clone(),
+            KafkaInstance {
+                invoice_id: line.invoice_id.clone(),
+
+                aggregate_data_usage: teams.iter().fold(
+                    DataUsage {
                         base_size: 0,
                         tiered_size: 0,
                     },
-                    teams: h
-                        .kafka_instance
-                        .topics
-                        .iter()
-                        .map(|topic| {
-                            (
-                                topic.name.splitn(2, '.').nth(0).unwrap().to_owned(),
-                                topic
-                                    .partitions
-                                    .iter()
-                                    .map(|partition| {
-                                        (partition.size, partition.remote_size.unwrap_or(0))
-                                    })
-                                    .fold(
-                                        DataUsage {
-                                            base_size: 0,
-                                            tiered_size: 0,
-                                        },
-                                        |mut acc, (base, tiered)| {
-                                            acc.base_size += base;
-                                            acc.tiered_size += tiered;
-                                            acc
-                                        },
-                                    ),
-                            )
-                        })
-                        .collect::<HashMap<String, DataUsage>>(),
-                },
-            );
-
-            TenantEnv {
-                tenant: h.kafka_instance.tenant.clone(),
-                environment: h.kafka_instance.environment.clone(),
-                kafkas,
-            }
-        })
-        .collect();
-
-    let mut old_tenants: HashMap<Key, DataUsage> = HashMap::new();
-    kafka_base_cost_lines
-        .iter()
-        .map(|line| {
-            (
-                line.kafka_instance.tenant.clone(),
-                line.kafka_instance.environment.clone(),
-                line.kafka_instance.service_name.clone(),
-                line.kafka_instance.topics.clone(),
-            )
-        })
-        .for_each(|(tenant, environment, kafka_instance, topics)| {
-            topics
-                .iter()
-                .map(|topic| {
-                    (
-                        topic.name.splitn(2, '.').nth(0).unwrap(),
-                        topic
-                            .partitions
-                            .iter()
-                            .map(|partition| (partition.size, partition.remote_size.unwrap_or(0)))
-                            .collect::<Vec<(u64, u64)>>(),
-                    )
-                })
-                .for_each(|(team, values)| {
-                    let base_size: u64 = values.iter().map(|(base_size, _)| base_size).sum();
-                    let tiered_size: u64 = values.iter().map(|(_, tiered_size)| tiered_size).sum();
-
-                    let sizes = old_tenants
-                        .entry(Key {
-                            tenant: tenant.clone(),
-                            environment: environment.clone(),
-                            kafka_instance: kafka_instance.clone(),
-                            team: team.to_string(),
-                        })
-                        .or_insert_with(|| DataUsage {
-                            base_size: 0,
-                            tiered_size: 0,
-                        });
-                    sizes.base_size += base_size;
-                    sizes.tiered_size += tiered_size;
-                });
-        });
-
-    dbg!(old_tenants);
-
-    for (tenant, teams) in teams_per_tenant {
-        info!(
-            "Tenant '{tenant}' has {} unique team names across environments",
-            teams.len()
+                    |mut acc, (_, du)| {
+                        acc.base_size += du.base_size;
+                        acc.tiered_size += du.tiered_size;
+                        acc
+                    },
+                ),
+                teams,
+                base_cost: line.line_total_local.clone(),
+                currency: line.local_currency.clone(),
+                tiered_cost: BigDecimal::zero(),
+            },
         );
     }
 
-    // BigQuery(aiven_cost_regional.cost_items): billing_group_id, invoice_id, project_name, environment, team, service, service_name, tenant, status, cost, currency, date, number_of_days
-    // BigQuery(aiven_cost_regional.cost_team): billing_group_id, invoice_id, project_name, environment, team, service(kafka_team), service_name(kafka-instance), tenant, status, cost, cost_type(base|tiered), currency, date, number_of_days
+    let mut bigquery_data_rows = TableDataInsertAllRequest::new();
+    for (tenant_env, kafka_instances) in tenant_envs {
+        for (kafka_name, instance) in kafka_instances {
+            let Some(num_teams) = BigDecimal::from_usize(instance.teams.len()) else {
+                bail!("Unable to convert to BigDecimal: {}", instance.teams.len())
+            };
+            let half_base_cost = instance.base_cost / 2;
+            let team_divided_base_cost = &half_base_cost / num_teams;
+            for (team_name, team_data_usage) in instance.teams {
+                // bqlines = []
+                //
+                // for tenants
+                //   let cost
+                //
+                //   for env
+                //    let env_cost
+                //
+                //    for kafka
+                //      let kafka_cost
+                //      let base_size = iter
+                //      let tiered_size = iter
+                //
+                //      let base_cost_kroner = (kafka_cost/2)/#kafka.teams
+                //      let base_storage_kroner = (kafka_cost/2)/base_size
+                //
+                //      for teams
+                //        team_kost = base_cost_kroner + (base_storage_kroner * team.base_size)
+                //        // TODO: tiered
+                //
+                //        bqlines.insert(tenant, env, kafka, team, team_kost)
+                bigquery_data_rows.add_row(
+                    None,
+                    BigQueryTableRowData {
+                        billing_group_id: billing_group_id.to_string(),
+                        invoice_id: instance.invoice_id,
+                        project_name: tenant_env.project_name,
+                        environment: tenant_env.environment,
+                        team: team_name,
+                        service: String::from("kafka-base"),
+                        service_name: kafka_name.to_string(),
+                        tenant: tenant_env.tenant.to_string(),
+                        cost: team_divided_base_cost
+                            + (half_base_cost * team_data_usage.base_size
+                                / instance.aggregate_data_usage.base_size),
+                        currency: instance.currency,
+                        status: todo!(),
+                        date: todo!(),
+                        number_of_days: todo!(),
+                    },
+                )?;
+            }
+        }
+    }
 
-    // hash(key(tenant, env), value({}instance(key(instance_name), value([]teams(base_size, tiered_size)))))
+    // TODO: Iterate through and add tiered storage costs to bigquery_data_rows
 
-    // bqlines = []
-    //
-    // for tenants
-    //   let cost
-    //
-    //   for env
-    //    let env_cost
-    //
-    //    for kafka
-    //      let kafka_cost
-    //      let base_size = iter
-    //      let tiered_size = iter
-    //
-    //      let base_cost_kroner = (kafka_cost/2)/#kafka.teams
-    //      let base_storage_kroner = (kafka_cost/2)/base_size
-    //
-    //      for teams
-    //        team_kost = base_cost_kroner + (base_storage_kroner * team.base_size)
-    //        // TODO: tiered
-    //
-    //        bqlines.insert(tenant, env, kafka, team, team_kost)
-
-    // let topic_size: HashSet<_> = topics
-    //     .iter()
-    //     .filter_map(|topic| topic.get("topic_name").and_then(|i| i.as_str()))
-    //     .flat_map(|i| i.splitn(2, '.').take(1))
-    //     .collect();
-
-    // let number_of_teams = topics
-    //     .iter()
-    //     .filter_map(|topic| topic.get("topic_name").and_then(|i| i.as_str()))
-    //     .flat_map(|i| i.splitn(2, '.').take(1))
-    //     .collect::<HashSet<_>>()
-    //     .len();
-
-    // let team_cost =
-    //     BigDecimal::half(&total_kafka_cost) / BigDecimal::from_usize(number_of_teams).unwrap();
-
-    // let disk_rate =
-    // let weighted_team_cost = BigDecimal::half(&total_kafka_cost) * disk_rate
-    todo!()
+    Ok(bigquery_data_rows)
 }
 
 fn smear() {
@@ -354,4 +330,6 @@ fn smear() {
     //     + remote_storage_cost_for_team_topics
 }
 
-fn load() {}
+fn load(client: &Client, rows: &TableDataInsertAllRequest) -> Result<()> {
+    todo!()
+}
