@@ -49,7 +49,10 @@ impl Cfg {
 }
 
 mod aiven;
-use aiven::{AivenApiKafkaInvoiceLine, AivenInvoice, AivenInvoiceState, KafkaInvoiceLineCostType};
+use aiven::{
+    AivenApiKafka, AivenApiKafkaInvoiceLine, AivenInvoice, AivenInvoiceState,
+    KafkaInvoiceLineCostType,
+};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -148,6 +151,30 @@ async fn extract(
     ))
 }
 
+#[derive(Hash, Eq, PartialEq, Debug, Clone)]
+struct TenantEnv {
+    tenant: String,
+    environment: String,
+    project_name: String,
+}
+
+type TeamName = String;
+type KafkaInstanceName = String;
+struct KafkaInstance {
+    base_cost: BigDecimal,
+    tiered_cost: BigDecimal,
+    aggregate_data_usage: DataUsage,
+    teams: HashMap<TeamName, DataUsage>,
+    currency: String,
+    invoice_id: String,
+}
+
+#[derive(Eq, PartialEq, Debug, Default, Clone)]
+struct DataUsage {
+    base_size: u64,
+    tiered_size: u64,
+}
+
 #[derive(Serialize)]
 struct BigQueryTableRowData {
     billing_group_id: String,
@@ -170,51 +197,19 @@ fn transform(
     kafka_base_cost_lines: &[AivenApiKafkaInvoiceLine],
     kafka_tiered_storage_cost_lines: &[AivenApiKafkaInvoiceLine],
 ) -> Result<TableDataInsertAllRequest> {
-    #[derive(Hash, Eq, PartialEq, Debug, Clone)]
-    struct TenantEnv {
-        tenant: String,
-        environment: String,
-        project_name: String,
-    }
-
-    type TeamName = String;
-    type KafkaInstanceName = String;
-    struct KafkaInstance {
-        base_cost: BigDecimal,
-        tiered_cost: BigDecimal,
-        aggregate_data_usage: DataUsage,
-        teams: HashMap<TeamName, DataUsage>,
-        currency: String,
-        invoice_id: String,
-    }
-
-    #[derive(Eq, PartialEq, Debug, Default, Clone)]
-    struct DataUsage {
-        base_size: u64,
-        tiered_size: u64,
-    }
-    // let foo: HashMap<TenantEnv, HashMap<KafkaInstanceName, KafkaInstance>> = HashMap::new();
-    let mut tenant_envs: HashMap<TenantEnv, HashMap<KafkaInstanceName, KafkaInstance>> =
-        HashMap::new();
-    for line in kafka_base_cost_lines {
-        // Get existing TenantEnv's HashMap of kafka instances if it exists
-        let tenant_key = TenantEnv {
-            tenant: line.kafka_instance.tenant.clone(),
-            environment: line.kafka_instance.environment.clone(),
-            project_name: line.project_name.clone(),
-        };
-        let kafka_instances = tenant_envs
-            .entry(tenant_key)
-            .or_insert_with(|| HashMap::new());
-
-        // Sum up all topics' sizes per team
-        let teams = line
-            .kafka_instance
+    /// Sum up all topics' sizes per team
+    fn aggregate_topic_usage_by_team(
+        kafka_instance: &AivenApiKafka,
+    ) -> Result<HashMap<TeamName, DataUsage>> {
+        kafka_instance
             .topics
             .iter()
             .map(|topic| {
-                (
-                    topic.name.splitn(2, '.').nth(0).unwrap().to_owned(),
+                let Some(team_name) = topic.name.splitn(2, '.').next() else {
+                    bail!("Unable to find team name in topic name: '{}'", topic.name)
+                };
+                Ok((
+                    team_name.to_owned(),
                     topic
                         .partitions
                         .iter()
@@ -230,9 +225,22 @@ fn transform(
                                 acc
                             },
                         ),
-                )
+                ))
             })
-            .collect::<HashMap<String, DataUsage>>();
+            .collect()
+    }
+
+    let mut tenant_envs: HashMap<TenantEnv, HashMap<KafkaInstanceName, KafkaInstance>> =
+        HashMap::new();
+    for line in kafka_base_cost_lines {
+        // Get existing TenantEnv's HashMap of kafka instances if it exists
+        let tenant_key = TenantEnv {
+            tenant: line.kafka_instance.tenant.clone(),
+            environment: line.kafka_instance.environment.clone(),
+            project_name: line.project_name.clone(),
+        };
+        let kafka_instances = tenant_envs.entry(tenant_key).or_default();
+        let teams = aggregate_topic_usage_by_team(&line.kafka_instance)?;
 
         // Insert data into collector variable
         kafka_instances.insert(
@@ -298,8 +306,8 @@ fn transform(
                         environment: tenant_env.environment,
                         team: team_name,
                         service: String::from("kafka-base"),
-                        service_name: kafka_name.to_string(),
-                        tenant: tenant_env.tenant.to_string(),
+                        service_name: kafka_name,
+                        tenant: tenant_env.tenant,
                         cost: team_divided_base_cost
                             + (half_base_cost * team_data_usage.base_size
                                 / instance.aggregate_data_usage.base_size),
