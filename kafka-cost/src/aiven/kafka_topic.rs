@@ -30,9 +30,6 @@ pub struct AivenApiKafkaTopicPartition {
 pub struct AivenApiKafkaTopic {
     #[serde(rename = "topic_name")]
     pub name: String,
-    pub state: AivenApiKafkaTopicState,
-    #[serde(skip)]
-    pub remote_storage_enabled: bool,
     #[serde(deserialize_with = "tags_deserializer")]
     pub tags: HashMap<String, String>,
     #[serde(skip)]

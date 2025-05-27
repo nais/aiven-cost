@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use anyhow::{Result, bail};
 use bigdecimal::{BigDecimal, FromPrimitive, Zero};
+use chrono::Datelike;
 use futures_util::future::try_join_all;
 use gcp_bigquery_client::{
     Client, model::table_data_insert_all_request::TableDataInsertAllRequest,
@@ -66,10 +67,7 @@ async fn main() -> Result<()> {
     dbg!(&kafka_base_cost_lines.len());
     // dbg!(&kafka_base_cost_lines[0]);
     // todo!();
-    let data = transform(
-        &kafka_base_cost_lines,
-        &kafka_base_tiered_storage_lines,
-    )?;
+    let data = transform(&kafka_base_cost_lines, &kafka_base_tiered_storage_lines)?;
 
     load(&bigquery_client, &data)?;
 
@@ -160,11 +158,10 @@ type TeamName = String;
 type KafkaInstanceName = String;
 struct KafkaInstance {
     base_cost: BigDecimal,
-    tiered_cost: BigDecimal,
     aggregate_data_usage: DataUsage,
     teams: HashMap<TeamName, DataUsage>,
-    currency: String,
-    invoice_id: String,
+    year_month: String,
+    days_in_month: String,
 }
 
 #[derive(Eq, PartialEq, Debug, Default, Clone)]
@@ -183,6 +180,7 @@ struct BigQueryTableRowData {
     tenant: String,
     cost: BigDecimal,
     date: String,
+    number_of_days: String,
 }
 
 fn transform(
@@ -197,7 +195,7 @@ fn transform(
             .topics
             .iter()
             .map(|topic| {
-                let Some(team_name) = topic.name.splitn(2, '.').next() else {
+                let Some(team_name) = topic.name.split('.').next() else {
                     bail!("Unable to find team name in topic name: '{}'", topic.name)
                 };
                 Ok((
@@ -238,8 +236,6 @@ fn transform(
         kafka_instances.insert(
             line.service_name.clone(),
             KafkaInstance {
-                invoice_id: line.invoice_id.clone(),
-
                 aggregate_data_usage: teams.iter().fold(
                     DataUsage {
                         base_size: 0,
@@ -253,8 +249,8 @@ fn transform(
                 ),
                 teams,
                 base_cost: line.line_total_local.clone(),
-                currency: line.local_currency.clone(),
-                tiered_cost: BigDecimal::zero(),
+                year_month: line.timestamp_begin.format("%Y-%m").to_string(),
+                days_in_month: line.timestamp_begin.num_days_in_month().to_string(),
             },
         );
     }
@@ -266,29 +262,8 @@ fn transform(
                 bail!("Unable to convert to BigDecimal: {}", instance.teams.len())
             };
             for (team_name, team_data_usage) in &instance.teams {
-                // bqlines = []
-                //
-                // for tenants
-                //   let cost
-                //
-                //   for env
-                //    let env_cost
-                //
-                //    for kafka
-                //      let kafka_cost
-                //      let base_size = iter
-                //      let tiered_size = iter
-                //
-                //      let base_cost_kroner = (kafka_cost/2)/#kafka.teams
-                //      let base_storage_kroner = (kafka_cost/2)/base_size
-                //
-                //      for teams
-                //        team_kost = base_cost_kroner + (base_storage_kroner * team.base_size)
-                //        // TODO: tiered
-                //
-                //        bqlines.insert(tenant, env, kafka, team, team_kost)
                 let half_base_cost = instance.base_cost.clone() / 2;
-                let team_divided_base_cost = &half_base_cost / num_teams;
+                let team_divided_base_cost = &half_base_cost / num_teams.clone();
 
                 let storage_weight =
                     team_data_usage.base_size / instance.aggregate_data_usage.base_size;
@@ -305,10 +280,10 @@ fn transform(
                         service_name: kafka_name.clone(),
                         tenant: tenant_env.tenant.clone(),
                         cost: team_divided_base_cost + storage_weighted_storage_cost,
-                        date: todo!(),
+                        date: instance.year_month.clone(),
+                        number_of_days: instance.days_in_month.clone(),
                     },
                 )?;
-
             }
         }
     }
@@ -328,7 +303,11 @@ fn transform(
 
         let total_tiered_storage = instance.aggregate_data_usage.tiered_size;
         for (name, usage) in &instance.teams {
-            let _ = bigquery_data_rows.add_row(
+            if usage.tiered_size.is_zero() {
+                continue;
+            }
+
+            bigquery_data_rows.add_row(
                 None,
                 BigQueryTableRowData {
                     project_name: project_name.to_owned(),
@@ -338,14 +317,12 @@ fn transform(
                     service_name: service_name.to_owned(),
                     tenant: tenant.to_owned(),
                     cost: &line.line_total_local * (usage.tiered_size / total_tiered_storage),
-                    date: todo!(),
+                    date: line.timestamp_begin.format("%Y-%m").to_string(),
+                    number_of_days: line.timestamp_begin.num_days_in_month().to_string(),
                 },
-            );
-            //        tenant_envs: HashMap<TenantEnv, HashMap<KafkaInstanceName, KafkaInstance>> =
+            )?;
         }
     }
-
-    // TODO: Iterate through and add tiered storage costs to bigquery_data_rows
 
     Ok(bigquery_data_rows)
 }

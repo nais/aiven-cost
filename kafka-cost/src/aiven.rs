@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use anyhow::{Result, bail};
 use bigdecimal::BigDecimal;
+use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use tracing::info;
 
@@ -91,8 +92,7 @@ pub struct AivenApiKafkaInvoiceLine {
     #[serde(skip)]
     pub kafka_instance: AivenApiKafka,
     pub line_total_local: BigDecimal,
-    pub local_currency: String,
-    pub invoice_id: String,
+    pub timestamp_begin: DateTime<Utc>,
 }
 
 impl AivenApiKafkaInvoiceLine {
