@@ -92,17 +92,19 @@ func (c *Client) GetInvoiceLines(ctx context.Context, invoice Invoice) ([]bigque
 
 	for _, line := range aivenInvoiceLines {
 		tags := Tags{}
-		t, err := c.GetServiceTags(ctx, *line.ProjectName, *line.ServiceName)
-		if err != nil {
-			c.logger.
-				WithFields(logrus.Fields{
-					"project": line.ProjectName,
-					"service": line.ServiceName,
-				}).
-				WithError(err).
-				Warnf("failed to get service tags")
+		if line.ProjectName != nil && line.ServiceName != nil {
+			fetchedTags, err := c.GetServiceTags(ctx, *line.ProjectName, *line.ServiceName)
+			if err != nil {
+				c.logger.
+					WithFields(logrus.Fields{
+						"project": line.ProjectName,
+						"service": line.ServiceName,
+					}).
+					WithError(err).
+					Warnf("failed to get service tags")
+			}
+			tags = fetchedTags
 		}
-		tags = t
 
 		timestampBegin, err := time.Parse(time.RFC3339, *line.TimestampBegin)
 		if err != nil {
