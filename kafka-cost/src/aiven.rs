@@ -2,7 +2,6 @@ use std::collections::HashMap;
 
 use anyhow::{Result, bail};
 use bigdecimal::BigDecimal;
-use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use tracing::info;
 
@@ -24,7 +23,6 @@ pub struct AivenInvoice {
     #[serde(rename(deserialize = "invoice_number"))]
     pub id: String,
     // pub total_inc_vat: String, // TODO: Comment back in only if we want to double-check that all the lines add up correctly
-    pub billing_group_id: String,
     pub state: AivenInvoiceState,
 }
 
@@ -88,7 +86,6 @@ pub enum KafkaInvoiceLineCostType {
 pub struct AivenApiKafkaInvoiceLine {
     #[serde(skip)]
     pub cost_type: KafkaInvoiceLineCostType,
-    pub timestamp_begin: DateTime<Utc>,
     pub service_name: String,
     pub project_name: String,
     #[serde(skip)]
@@ -200,9 +197,9 @@ impl AivenApiKafkaInvoiceLine {
             .collect::<Result<Vec<_>>>()?;
 
         info!(
-            "Invoice ID {invoice_id} had {} line(s), of which {} were kafka related",
+            "Invoice ID {invoice_id} had {} line(s), of which {:?} were kafka related",
             &response_invoice_lines.len(),
-            &kafka_invoice_lines.len()
+            &kafka_invoice_lines
         );
 
         Self::from_json_list(&kafka_invoice_lines)

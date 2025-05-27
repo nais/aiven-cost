@@ -2,7 +2,6 @@ use std::collections::HashMap;
 
 use anyhow::{Result, bail};
 use bigdecimal::{BigDecimal, FromPrimitive, Zero};
-use chrono::{DateTime, Utc};
 use futures_util::future::try_join_all;
 use gcp_bigquery_client::{
     Client, model::table_data_insert_all_request::TableDataInsertAllRequest,
@@ -68,7 +67,6 @@ async fn main() -> Result<()> {
     // dbg!(&kafka_base_cost_lines[0]);
     // todo!();
     let data = transform(
-        &cfg.billing_group_id,
         &kafka_base_cost_lines,
         &kafka_base_tiered_storage_lines,
     )?;
@@ -188,7 +186,6 @@ struct BigQueryTableRowData {
 }
 
 fn transform(
-    billing_group_id: &str,
     kafka_base_cost_lines: &[AivenApiKafkaInvoiceLine],
     kafka_tiered_storage_cost_lines: &[AivenApiKafkaInvoiceLine],
 ) -> Result<TableDataInsertAllRequest> {
@@ -297,6 +294,7 @@ fn transform(
                     team_data_usage.base_size / instance.aggregate_data_usage.base_size;
                 let storage_weighted_storage_cost =
                     &team_divided_base_cost + (half_base_cost * storage_weight);
+
                 bigquery_data_rows.add_row(
                     None,
                     BigQueryTableRowData {
@@ -310,6 +308,7 @@ fn transform(
                         date: todo!(),
                     },
                 )?;
+
             }
         }
     }
