@@ -220,6 +220,7 @@ fn transform(
             .collect()
     }
 
+    // We start by making an iterable collection of all tenants>envs>instances>teams, and their usage of Kafka
     let mut tenant_envs: HashMap<TenantEnv, HashMap<KafkaInstanceName, KafkaInstance>> =
         HashMap::new();
     for line in kafka_base_cost_lines {
@@ -255,6 +256,7 @@ fn transform(
         );
     }
 
+    // With the iterable collection we can calcuate each teams usage of Kafka by their topics combined byte size
     let mut bigquery_data_rows = TableDataInsertAllRequest::new();
     for (tenant_env, kafka_instances) in &tenant_envs {
         for (kafka_name, instance) in kafka_instances {
@@ -288,6 +290,8 @@ fn transform(
         }
     }
 
+    // Not every Kafka instance has tiered storage, so we iterate separately
+    // for the teams using it, calculate based on their tiered storage size
     for line in kafka_tiered_storage_cost_lines {
         let project_name = &line.project_name;
         let env = &line.kafka_instance.environment;
