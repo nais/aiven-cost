@@ -177,19 +177,14 @@ struct DataUsage {
 
 #[derive(Serialize)]
 struct BigQueryTableRowData {
-    billing_group_id: String,
-    invoice_id: String,
     project_name: String,
     environment: String,
     team: String,
     service: String,
     service_name: String,
     tenant: String,
-    status: String,
     cost: BigDecimal,
-    currency: String,
-    date: DateTime<Utc>,
-    number_of_days: u8,
+    date: String,
 }
 
 fn transform(
@@ -268,14 +263,12 @@ fn transform(
     }
 
     let mut bigquery_data_rows = TableDataInsertAllRequest::new();
-    for (tenant_env, kafka_instances) in tenant_envs {
+    for (tenant_env, kafka_instances) in &tenant_envs {
         for (kafka_name, instance) in kafka_instances {
             let Some(num_teams) = BigDecimal::from_usize(instance.teams.len()) else {
                 bail!("Unable to convert to BigDecimal: {}", instance.teams.len())
             };
-            let half_base_cost = instance.base_cost / 2;
-            let team_divided_base_cost = &half_base_cost / num_teams;
-            for (team_name, team_data_usage) in instance.teams {
+            for (team_name, team_data_usage) in &instance.teams {
                 // bqlines = []
                 //
                 // for tenants
@@ -297,45 +290,65 @@ fn transform(
                 //        // TODO: tiered
                 //
                 //        bqlines.insert(tenant, env, kafka, team, team_kost)
+                let half_base_cost = instance.base_cost.clone() / 2;
+                let team_divided_base_cost = &half_base_cost / num_teams;
+
+                let storage_weight =
+                    team_data_usage.base_size / instance.aggregate_data_usage.base_size;
+                let storage_weighted_storage_cost =
+                    &team_divided_base_cost + (half_base_cost * storage_weight);
                 bigquery_data_rows.add_row(
                     None,
                     BigQueryTableRowData {
-                        billing_group_id: billing_group_id.to_string(),
-                        invoice_id: instance.invoice_id,
-                        project_name: tenant_env.project_name,
-                        environment: tenant_env.environment,
-                        team: team_name,
+                        project_name: tenant_env.project_name.clone(),
+                        environment: tenant_env.environment.clone(),
+                        team: team_name.clone(),
                         service: String::from("kafka-base"),
-                        service_name: kafka_name,
-                        tenant: tenant_env.tenant,
-                        cost: team_divided_base_cost
-                            + (half_base_cost * team_data_usage.base_size
-                                / instance.aggregate_data_usage.base_size),
-                        currency: instance.currency,
-                        status: todo!(),
+                        service_name: kafka_name.clone(),
+                        tenant: tenant_env.tenant.clone(),
+                        cost: team_divided_base_cost + storage_weighted_storage_cost,
                         date: todo!(),
-                        number_of_days: todo!(),
                     },
                 )?;
             }
         }
     }
 
+    for line in kafka_tiered_storage_cost_lines {
+        let project_name = &line.project_name;
+        let env = &line.kafka_instance.environment;
+        let tenant = &line.kafka_instance.tenant;
+        let instances = &tenant_envs[&TenantEnv {
+            tenant: tenant.to_owned(),
+            environment: env.to_owned(),
+            project_name: project_name.to_owned(),
+        }];
+
+        let service_name = &line.service_name;
+        let instance = &instances[service_name];
+
+        let total_tiered_storage = instance.aggregate_data_usage.tiered_size;
+        for (name, usage) in &instance.teams {
+            let _ = bigquery_data_rows.add_row(
+                None,
+                BigQueryTableRowData {
+                    project_name: project_name.to_owned(),
+                    environment: env.to_owned(),
+                    team: name.to_owned(),
+                    service: String::from("kafka-tiered"),
+                    service_name: service_name.to_owned(),
+                    tenant: tenant.to_owned(),
+                    cost: &line.line_total_local * (usage.tiered_size / total_tiered_storage),
+                    date: todo!(),
+                },
+            );
+            //        tenant_envs: HashMap<TenantEnv, HashMap<KafkaInstanceName, KafkaInstance>> =
+        }
+    }
+
     // TODO: Iterate through and add tiered storage costs to bigquery_data_rows
 
     Ok(bigquery_data_rows)
-}
-
-fn smear() {
-    // let basis_cost = kafka_cluster_cost
-    // V teamcost
-
-    // let teamcost =
-    // V is invoice data
-    // 0.5 * basis_cost / (number_of_teams)
-    // V topic
-    //     + (0.5*basis_cost*(used_disk/topicsdataconsumption)
-    //     + remote_storage_cost_for_team_topics
 }
 
 fn load(client: &Client, rows: &TableDataInsertAllRequest) -> Result<()> {
