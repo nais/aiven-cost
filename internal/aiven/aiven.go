@@ -97,8 +97,8 @@ func (c *Client) GetInvoiceLines(ctx context.Context, invoice Invoice) ([]bigque
 			if err != nil {
 				c.logger.
 					WithFields(logrus.Fields{
-						"project": line.ProjectName,
-						"service": line.ServiceName,
+						"project": *line.ProjectName,
+						"service": *line.ServiceName,
 					}).
 					WithError(err).
 					Warnf("failed to get service tags")
