@@ -110,18 +110,19 @@ func (c *Client) GetInvoiceLines(ctx context.Context, invoice Invoice) ([]bigque
 		if err != nil {
 			return nil, err
 		}
+
 		ret = append(ret, bigquery.Line{
 			BillingGroupId: c.billingGroupID,
 			InvoiceId:      invoice.InvoiceId,
-			ProjectName:    *line.ProjectName,
+			ProjectName:    derefString(line.ProjectName),
 			Environment:    tags.Environment,
 			Team:           parseTeam(tags.Team, string(line.ServiceType)),
 			Service:        parseServiceType(string(line.LineType), string(line.ServiceType)),
-			ServiceName:    *line.ServiceName,
+			ServiceName:    derefString(line.ServiceName),
 			Tenant:         parseTenant(tags.Tenant),
 			Status:         invoice.Status,
-			Cost:           *line.LineTotalLocal,
-			Currency:       *line.LocalCurrency,
+			Cost:           derefString(line.LineTotalLocal),
+			Currency:       derefString(line.LocalCurrency),
 			Date:           fmt.Sprintf("%02d-%02d", timestampBegin.Year(), timestampBegin.Month()),
 			NumberOfDays:   amountOfDaysInMonth(timestampBegin.Month(), timestampBegin.Year()),
 		})
@@ -156,4 +157,12 @@ func (c *Client) GetServiceTags(ctx context.Context, projectName, serviceName st
 	}
 
 	return tags.Tags, nil
+}
+
+func derefString(s *string) string {
+	if s != nil {
+		return *s
+	}
+
+	return ""
 }
