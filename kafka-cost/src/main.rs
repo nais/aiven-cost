@@ -330,7 +330,12 @@ fn transform(
 
 async fn load(cfg: &Cfg, client: &Client, rows: TableDataInsertAllRequest) -> Result<()> {
     let ds = client.dataset().get(&cfg.bigquery_project_id, &cfg.bigquery_dataset).await?;
-    let table =  create_table(&cfg, &client, &ds).await?; //should fail if exists, ideally
+
+    if let Err(_) =
+        client.table().get(&cfg.bigquery_project_id, &cfg.bigquery_dataset, &cfg.bigquery_table, None).await {
+            create_table(&cfg, &client, &ds).await?;
+        }
+
     let query_response = client
         .job()
         .query(
@@ -347,7 +352,7 @@ async fn load(cfg: &Cfg, client: &Client, rows: TableDataInsertAllRequest) -> Re
 
     client
         .tabledata()
-        .insert_all(&ds.project_id(), &ds.dataset_id(), &table.table_id(), rows)
+        .insert_all(&ds.project_id(), &ds.dataset_id(), &cfg.bigquery_table, rows)
         .await?;
 
     Ok(())
