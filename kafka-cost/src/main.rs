@@ -5,7 +5,7 @@ use bigdecimal::{BigDecimal, FromPrimitive, Zero};
 use chrono::Datelike;
 use futures_util::future::try_join_all;
 use gcp_bigquery_client::{
-    Client, model::table_data_insert_all_request::TableDataInsertAllRequest,
+    model::{dataset::Dataset, query_request::QueryRequest, query_response::ResultSet, table::Table, table_data_insert_all_request::TableDataInsertAllRequest, table_field_schema::TableFieldSchema, table_schema::TableSchema}, Client
 };
 use serde::Serialize;
 use tracing::info;
@@ -42,8 +42,8 @@ impl Cfg {
             billing_group_id: "7d14362d-1e2a-4864-b408-1cc631bc4fab".into(),
             // BQ stuff
             bigquery_project_id: "nais-io".into(),
-            bigquery_dataset: "kafka_team_cost".into(),
-            bigquery_table: "kafka_team_cost".into(),
+            bigquery_dataset: "aiven_cost_regional".into(),
+            bigquery_table: "kafka-cost".into(),
         }
     }
 }
@@ -65,11 +65,9 @@ async fn main() -> Result<()> {
     let (kafka_base_cost_lines, kafka_base_tiered_storage_lines) =
         extract(&aiven_client, &cfg).await?;
     dbg!(&kafka_base_cost_lines.len());
-    // dbg!(&kafka_base_cost_lines[0]);
-    // todo!();
     let data = transform(&kafka_base_cost_lines, &kafka_base_tiered_storage_lines)?;
 
-    load(&bigquery_client, &data)?;
+    load(&cfg, &bigquery_client, data).await?;
 
     Ok(())
 }
@@ -89,7 +87,6 @@ async fn extract(
         invoices.len(),
         unpaid_invoices.len(),
     );
-    // dbg!(&unpaid_invoices);
 
     let mut kafka_invoice_lines: Vec<_> =
         try_join_all(unpaid_invoices.iter().map(|invoice| {
@@ -99,7 +96,6 @@ async fn extract(
         .into_iter()
         .flatten()
         .collect();
-    // dbg!(&kafka_invoice_lines.len());
     let kafka_tiered_storage_cost_invoice_lines: Vec<_> = kafka_invoice_lines
         .iter()
         .filter(|&i| i.cost_type == KafkaInvoiceLineCostType::TieredStorage)
@@ -220,7 +216,7 @@ fn transform(
             .collect()
     }
 
-    // We start by making an iterable collection of all tenants>envs>instances>teams, and their usage of Kafka
+    // We start by making collection of all tenants>envs>instances>teams, and their usage of Kafka
     let mut tenant_envs: HashMap<TenantEnv, HashMap<KafkaInstanceName, KafkaInstance>> =
         HashMap::new();
     for line in kafka_base_cost_lines {
@@ -256,7 +252,7 @@ fn transform(
         );
     }
 
-    // With the iterable collection we can calcuate each teams usage of Kafka by their topics combined byte size
+    // With the collection we can calcuate each teams usage of Kafka by their topics combined byte size
     let mut bigquery_data_rows = TableDataInsertAllRequest::new();
     for (tenant_env, kafka_instances) in &tenant_envs {
         for (kafka_name, instance) in kafka_instances {
@@ -331,6 +327,52 @@ fn transform(
     Ok(bigquery_data_rows)
 }
 
-fn load(client: &Client, rows: &TableDataInsertAllRequest) -> Result<()> {
-    todo!()
+
+async fn load(cfg: &Cfg, client: &Client, rows: TableDataInsertAllRequest) -> Result<()> {
+    let ds = client.dataset().get(&cfg.bigquery_project_id, &cfg.bigquery_dataset).await?;
+    let table =  create_table(&cfg, &client, &ds).await?; //should fail if exists, ideally
+    let query_response = client
+        .job()
+        .query(
+            &cfg.bigquery_project_id,
+            QueryRequest::new(format!(
+                "DELETE FROM {}.{}.{} WHERE status NOT IN ('paid')", &cfg.bigquery_project_id, &cfg.bigquery_dataset, &cfg.bigquery_table
+            )),
+        )
+        .await?;
+    let mut rs = ResultSet::new_from_query_response(query_response);
+    while rs.next_row() {
+        info!("Number of rows deleted: {}", rs.get_i64_by_name("c")?.unwrap());
+    }
+
+    client
+        .tabledata()
+        .insert_all(&ds.project_id(), &ds.dataset_id(), &table.table_id(), rows)
+        .await?;
+
+    Ok(())
+}
+
+async fn create_table(cfg: &Cfg, client: &Client, ds: &Dataset) -> Result<Table> {
+      ds
+        .create_table(
+            &client,
+            Table::from_dataset(
+                &ds,
+                &cfg.bigquery_table,
+                TableSchema::new(vec![
+                    TableFieldSchema::string("project_name"),
+                    TableFieldSchema::string("environment"),
+                    TableFieldSchema::string("team"),
+                    TableFieldSchema::string("service"),
+                    TableFieldSchema::string("tenant"),
+                    TableFieldSchema::big_numeric("cost"),
+                    TableFieldSchema::date("date"),
+                    TableFieldSchema::numeric("number_of_days"),
+                ]),
+            )
+            .friendly_name("kafka cost")
+            .description("kafka costs for topics per team weighted by usage")
+        )
+          .await.map_err(anyhow::Error::msg)
 }
