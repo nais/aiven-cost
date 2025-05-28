@@ -107,7 +107,8 @@ async fn extract(
             .iter_mut()
             .filter(|i| i.cost_type == KafkaInvoiceLineCostType::Base)
             .map(|kafka_instance| {
-                kafka_instance.populate_with_tags_from_aiven_api(aiven_client, cfg)
+                let inv_typ = kafka_instance.kafka_instance.invoice_type.clone();
+                kafka_instance.populate_with_tags_from_aiven_api(aiven_client, inv_typ, cfg )
             }),
     )
     .await?;
@@ -155,6 +156,7 @@ type KafkaInstanceName = String;
 struct KafkaInstance {
     base_cost: BigDecimal,
     aggregate_data_usage: DataUsage,
+    invoice_type: String,
     teams: HashMap<TeamName, DataUsage>,
     year_month: String,
     days_in_month: String,
@@ -166,12 +168,13 @@ struct DataUsage {
     tiered_size: u64,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Debug, PartialEq, Eq, Clone)]
 struct BigQueryTableRowData {
     project_name: String,
     environment: String,
     team: String,
     service: String,
+    status: String,
     service_name: String,
     tenant: String,
     cost: BigDecimal,
@@ -245,6 +248,7 @@ fn transform(
                     },
                 ),
                 teams,
+                invoice_type: line.kafka_instance.invoice_type.to_string(),
                 base_cost: line.line_total_local.clone(),
                 year_month: line.timestamp_begin.format("%Y-%m").to_string(),
                 days_in_month: line.timestamp_begin.num_days_in_month().to_string(),
@@ -275,6 +279,7 @@ fn transform(
                         environment: tenant_env.environment.clone(),
                         team: team_name.clone(),
                         service: String::from("kafka-base"),
+                        status: instance.invoice_type.to_string(),
                         service_name: kafka_name.clone(),
                         tenant: tenant_env.tenant.clone(),
                         cost: team_divided_base_cost + storage_weighted_storage_cost,
@@ -314,6 +319,7 @@ fn transform(
                     environment: env.to_owned(),
                     team: name.to_owned(),
                     service: String::from("kafka-tiered"),
+                    status: instance.invoice_type.to_string(),
                     service_name: service_name.to_owned(),
                     tenant: tenant.to_owned(),
                     cost: &line.line_total_local * (usage.tiered_size / total_tiered_storage),
@@ -369,6 +375,7 @@ async fn create_table(cfg: &Cfg, client: &Client, ds: &Dataset) -> Result<Table>
                     TableFieldSchema::string("project_name"),
                     TableFieldSchema::string("environment"),
                     TableFieldSchema::string("team"),
+                    TableFieldSchema::string("status"),
                     TableFieldSchema::string("service"),
                     TableFieldSchema::string("tenant"),
                     TableFieldSchema::big_numeric("cost"),

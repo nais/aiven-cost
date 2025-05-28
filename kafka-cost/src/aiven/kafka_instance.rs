@@ -12,6 +12,8 @@ pub struct AivenApiKafka {
     pub topics: Vec<AivenApiKafkaTopic>,
     /// Fetched from tags on the Kafka service's Aiven API
     pub tenant: String,
+    #[serde(skip)]
+    pub invoice_type: String,
     /// Fetched from tags on the Kafka service's Aiven API
     pub environment: String,
     #[serde(skip)]
@@ -23,6 +25,7 @@ impl AivenApiKafka {
     pub fn from_json_obj(
         input: &serde_json::Value,
         project_name: &str,
+        invoice_type: &str,
         service_name: &str,
     ) -> Result<Self> {
         let mut result: Self = match serde_json::from_value(input.clone()) {
@@ -34,6 +37,7 @@ impl AivenApiKafka {
             ),
         };
         result.project_name = project_name.to_string();
+        result.invoice_type = invoice_type.to_string();
         result.service_name = service_name.to_string();
         Ok(result)
     }
@@ -41,11 +45,13 @@ impl AivenApiKafka {
         reqwest_client: &reqwest::Client,
         cfg: &Cfg,
         project_name: &str,
+        invoice_type: &str,
         service_name: &str,
     ) -> Result<Self> {
         let result = Self::from_json_obj(
             &get_tags_of_aiven_service(reqwest_client, cfg, project_name, service_name).await?,
             project_name,
+            invoice_type,
             service_name,
         )?;
         assert!(

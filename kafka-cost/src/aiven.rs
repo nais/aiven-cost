@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, fmt::Display};
 
 use anyhow::{Result, bail};
 use bigdecimal::BigDecimal;
@@ -19,11 +19,20 @@ pub enum AivenInvoiceState {
     Estimate,
 }
 
+impl Display for AivenInvoiceState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AivenInvoiceState::Paid => write!(f, "paid"),
+            AivenInvoiceState::Mailed => write!(f, "mailed"),
+            AivenInvoiceState::Estimate => write!(f, "estimate"),
+        }
+    }
+}
+
 #[derive(Debug, Deserialize)]
 pub struct AivenInvoice {
     #[serde(rename(deserialize = "invoice_number"))]
     pub id: String,
-    // pub total_inc_vat: String, // TODO: Comment back in only if we want to double-check that all the lines add up correctly
     pub state: AivenInvoiceState,
 }
 
@@ -75,13 +84,13 @@ impl AivenInvoice {
         Self::from_json_list(response_invoices)
     }
 }
-
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq)]
 pub enum KafkaInvoiceLineCostType {
     #[default]
     Base,
     TieredStorage,
 }
+
 
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct AivenApiKafkaInvoiceLine {
@@ -137,6 +146,7 @@ impl AivenApiKafkaInvoiceLine {
     pub async fn populate_with_tags_from_aiven_api(
         &mut self,
         reqwest_client: &reqwest::Client,
+        invoice_type: String,
         cfg: &Cfg,
     ) -> Result<Self> {
         self.kafka_instance = AivenApiKafka::from_aiven_api(
@@ -144,6 +154,7 @@ impl AivenApiKafkaInvoiceLine {
             cfg,
             &self.project_name,
             &self.service_name,
+            &invoice_type,
         )
         .await?;
         Ok(self.to_owned())
@@ -152,6 +163,7 @@ impl AivenApiKafkaInvoiceLine {
     pub async fn from_aiven_api(
         reqwest_client: &reqwest::Client,
         cfg: &Cfg,
+
         invoice_id: &str,
     ) -> Result<Vec<Self>> {
         let url = format!(
