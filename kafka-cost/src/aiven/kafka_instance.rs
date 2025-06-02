@@ -41,6 +41,7 @@ impl AivenApiKafka {
         result.service_name = service_name.to_string();
         Ok(result)
     }
+
     pub async fn from_aiven_api(
         reqwest_client: &reqwest::Client,
         cfg: &Cfg,
@@ -48,8 +49,9 @@ impl AivenApiKafka {
         invoice_type: &str,
         service_name: &str,
     ) -> Result<Self> {
+
         let result = Self::from_json_obj(
-            &get_tags_of_aiven_service(reqwest_client, cfg, project_name, service_name).await?,
+            &get_tags_of_aiven_service(reqwest_client, cfg, project_name, service_name).await?.unwrap_or_else(|| serde_json::json!({"tenant": "", "environment": ""})),
             project_name,
             invoice_type,
             service_name,

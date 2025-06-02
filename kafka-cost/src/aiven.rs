@@ -3,7 +3,6 @@ use std::{collections::HashMap, fmt::Display};
 use anyhow::{Result, bail};
 use bigdecimal::BigDecimal;
 use chrono::{DateTime, Utc};
-use reqwest::StatusCode;
 use serde::Deserialize;
 use tracing::info;
 
@@ -149,6 +148,7 @@ impl AivenApiKafkaInvoiceLine {
         invoice_type: String,
         cfg: &Cfg,
     ) -> Result<Self> {
+        info!("getting tags for {} - {}", &self.project_name, &self.service_name);
         self.kafka_instance = AivenApiKafka::from_aiven_api(
             reqwest_client,
             cfg,
@@ -189,7 +189,6 @@ impl AivenApiKafkaInvoiceLine {
                 "missing field name:\n\t`lines`\n\t\tGET {response_status} {url}"
             )
         };
-        // dbg!(&response_invoice_lines.len());
 
         // Keep only Kafka related invoices
         let mut copy = response_invoice_lines.clone();
@@ -223,7 +222,7 @@ pub async fn get_tags_of_aiven_service(
     cfg: &Cfg,
     project_name: &str,
     service_name: &str,
-) -> Result<serde_json::Value> {
+) -> Result<Option<serde_json::Value>> {
     let url =
         format!("https://api.aiven.io/v1/project/{project_name}/service/{service_name}/tags",);
     let response = reqwest_client
@@ -237,10 +236,16 @@ pub async fn get_tags_of_aiven_service(
     else {
         bail!("Unable to parse json returned from: GET {response_status} {url}")
     };
+
+    if response_status == &reqwest::StatusCode::NOT_FOUND {
+        info!("{}, - does not exist", service_name);
+        return Ok(None)
+    }
+
     let Some(response_tags) = response_body.get("tags") else {
         bail!(
-            "Aiven's API returns json with missing field name:\n\t`tags`\n\t\tGET {response_status} {url}"
+            "missing field name:\n\t`tags`\n\t\tGET {response_status} {url}"
         )
     };
-    Ok(response_tags.clone())
+    Ok(Some(response_tags.clone()))
 }

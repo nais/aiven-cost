@@ -64,7 +64,6 @@ async fn main() -> Result<()> {
 
     let (kafka_base_cost_lines, kafka_base_tiered_storage_lines) =
         extract(&aiven_client, &cfg).await?;
-    dbg!(&kafka_base_cost_lines.len());
     let data = transform(&kafka_base_cost_lines, &kafka_base_tiered_storage_lines)?;
 
     load(&cfg, &bigquery_client, data).await?;
@@ -76,9 +75,12 @@ async fn extract(
     aiven_client: &reqwest::Client,
     cfg: &Cfg,
 ) -> Result<(Vec<AivenApiKafkaInvoiceLine>, Vec<AivenApiKafkaInvoiceLine>)> {
+    info!("Fetching invoices");
     let invoices: Vec<_> = AivenInvoice::from_aiven_api(aiven_client, cfg).await?;
+
     let unpaid_invoices: Vec<_> = invoices
         .iter()
+        .filter(|i| i.state == AivenInvoiceState::Estimate)
         .collect();
     info!(
         "Out of {} invoice(s) from Aiven, {} is/are unpaid/estimate(s)",
@@ -86,7 +88,8 @@ async fn extract(
         unpaid_invoices.len(),
     );
 
-    let mut kafka_invoice_lines: Vec<_> =
+    info!("Getting invoice lines for kakfa");
+    let mut kafka_invoice_lines: Vec<AivenApiKafkaInvoiceLine> =
         try_join_all(unpaid_invoices.iter().map(|invoice| {
             AivenApiKafkaInvoiceLine::from_aiven_api(aiven_client, cfg, &invoice.id)
         }))
@@ -103,13 +106,13 @@ async fn extract(
         kafka_invoice_lines
             .iter_mut()
             .filter(|i| i.cost_type == KafkaInvoiceLineCostType::Base)
-            .flat_map(|kafka_instance| {
+            .map(|kafka_instance| {
                 let inv_typ = kafka_instance.kafka_instance.invoice_type.clone();
                 kafka_instance.populate_with_tags_from_aiven_api(aiven_client, inv_typ, cfg )
             }),
     )
-    .await?;
-    dbg!(&kafka_invoice_lines.len());
+        .await?.into_iter().filter(|v| v.kafka_instance.tenant != "" ).collect::<Vec<AivenApiKafkaInvoiceLine>>();
+
     assert!(
         &kafka_invoice_lines.iter().all(
             |k| !k.kafka_instance.tenant.is_empty() && !k.kafka_instance.environment.is_empty()
@@ -124,9 +127,8 @@ async fn extract(
         }),
         "Unable to find kafka instance tiered storage belongs to",
     );
-    dbg!(&kafka_invoice_lines.len());
-    dbg!(&kafka_invoice_lines[0]);
 
+    info!("Fetching topics per kafka invoice line");
     Ok((
         try_join_all(
             kafka_invoice_lines
@@ -187,6 +189,7 @@ fn transform(
     fn aggregate_topic_usage_by_team(
         kafka_instance: &AivenApiKafka,
     ) -> Result<HashMap<TeamName, DataUsage>> {
+        info!("transforming invoice data");
         kafka_instance
             .topics
             .iter()
@@ -261,6 +264,7 @@ fn transform(
                 bail!("Unable to convert to BigDecimal: {}", instance.teams.len())
             };
             for (team_name, team_data_usage) in &instance.teams {
+                info!("calculating kafka cost for {}", team_name);
                 let half_base_cost = instance.base_cost.clone() / 2;
                 let team_divided_base_cost = &half_base_cost / num_teams.clone();
 
@@ -308,7 +312,7 @@ fn transform(
             if usage.tiered_size.is_zero() {
                 continue;
             }
-
+            info!("adding tiered storage cost for {}", name);
             bigquery_data_rows.add_row(
                 None,
                 BigQueryTableRowData {
@@ -336,8 +340,10 @@ async fn load(cfg: &Cfg, client: &Client, rows: TableDataInsertAllRequest) -> Re
 
     if let Err(_) =
         client.table().get(&cfg.bigquery_project_id, &cfg.bigquery_dataset, &cfg.bigquery_table, None).await {
+            info!("table doesn't exist, creating: {}", cfg.bigquery_table);
             create_table(&cfg, &client, &ds).await?;
         }
+
 
     let query_response = client
         .job()
@@ -362,6 +368,7 @@ async fn load(cfg: &Cfg, client: &Client, rows: TableDataInsertAllRequest) -> Re
 }
 
 async fn create_table(cfg: &Cfg, client: &Client, ds: &Dataset) -> Result<Table> {
+      info!("creating table");
       ds
         .create_table(
             &client,
