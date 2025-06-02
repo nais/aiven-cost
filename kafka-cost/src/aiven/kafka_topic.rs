@@ -95,7 +95,7 @@ impl AivenApiKafkaTopic {
         let key = "topic";
         let Some(topic_json) = response_body.get_mut(key) else {
             bail!(
-                "Aiven's API returns json with missing field name:\n\t`{key}`\n\t\tGET {response_status} {url}"
+                "missing field name:\n\t`{key}`\n\t\tGET {response_status} {url}"
             )
         };
 
@@ -146,7 +146,7 @@ impl AivenApiKafkaTopic {
             .and_then(|topic| topic.as_array())
         else {
             bail!(
-                "Aiven's API returns json with missing field name:\n\t`{key}`\n\t\tGET {response_status} {url}"
+                "missing field name:\n\t`{key}`\n\t\tGET {response_status} {url}"
             )
         };
 

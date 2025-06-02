@@ -3,6 +3,7 @@ use std::{collections::HashMap, fmt::Display};
 use anyhow::{Result, bail};
 use bigdecimal::BigDecimal;
 use chrono::{DateTime, Utc};
+use reqwest::StatusCode;
 use serde::Deserialize;
 use tracing::info;
 
@@ -74,7 +75,7 @@ impl AivenInvoice {
             .and_then(|invoices| invoices.as_array())
         else {
             bail!(
-                "Aiven's API returns json with missing field name:\n\t`invoices`\n\t\tGET {response_status} {url}"
+                "missing field name:\n\t`invoices`\n\t\tGET {response_status} {url}"
             )
         };
         info!(
@@ -90,7 +91,6 @@ pub enum KafkaInvoiceLineCostType {
     Base,
     TieredStorage,
 }
-
 
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct AivenApiKafkaInvoiceLine {
@@ -116,7 +116,7 @@ impl AivenApiKafkaInvoiceLine {
         };
         let key = "description";
         let Some(description) = obj.get(key).and_then(serde_json::Value::as_str) else {
-            bail!("Aiven's API returns json with missing field name:\n\t`{key}`\n\t\t{obj:#?}")
+            bail!("missing field name:\n\t`{key}`\n\t\t{obj:#?}")
         };
         result.cost_type = KafkaInvoiceLineCostType::Base;
         if description
@@ -153,8 +153,8 @@ impl AivenApiKafkaInvoiceLine {
             reqwest_client,
             cfg,
             &self.project_name,
-            &self.service_name,
             &invoice_type,
+            &self.service_name,
         )
         .await?;
         Ok(self.to_owned())
@@ -186,7 +186,7 @@ impl AivenApiKafkaInvoiceLine {
             .and_then(|invoices| invoices.as_array())
         else {
             bail!(
-                "Aiven's API returns json with missing field name:\n\t`lines`\n\t\tGET {response_status} {url}"
+                "missing field name:\n\t`lines`\n\t\tGET {response_status} {url}"
             )
         };
         // dbg!(&response_invoice_lines.len());

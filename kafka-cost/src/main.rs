@@ -79,8 +79,6 @@ async fn extract(
     let invoices: Vec<_> = AivenInvoice::from_aiven_api(aiven_client, cfg).await?;
     let unpaid_invoices: Vec<_> = invoices
         .iter()
-        // .filter(|i| i.state != AivenInvoiceState::Paid) // The below line avoids duplicate fetching of expensive Aiven API calls
-        .filter(|i| i.state == AivenInvoiceState::Estimate)
         .collect();
     info!(
         "Out of {} invoice(s) from Aiven, {} is/are unpaid/estimate(s)",
@@ -101,12 +99,11 @@ async fn extract(
         .filter(|&i| i.cost_type == KafkaInvoiceLineCostType::TieredStorage)
         .cloned()
         .collect();
-    // dbg!(&kafka_tiered_storage_cost_invoice_lines.len());
     kafka_invoice_lines = try_join_all(
         kafka_invoice_lines
             .iter_mut()
             .filter(|i| i.cost_type == KafkaInvoiceLineCostType::Base)
-            .map(|kafka_instance| {
+            .flat_map(|kafka_instance| {
                 let inv_typ = kafka_instance.kafka_instance.invoice_type.clone();
                 kafka_instance.populate_with_tags_from_aiven_api(aiven_client, inv_typ, cfg )
             }),

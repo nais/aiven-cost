@@ -54,6 +54,7 @@ impl AivenApiKafka {
             invoice_type,
             service_name,
         )?;
+
         assert!(
             result.project_name == project_name && service_name == result.service_name,
             "Project and Service names don't match expected"

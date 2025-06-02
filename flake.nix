@@ -38,6 +38,13 @@
 
         kafka-cost = craneLib.buildPackage (commonArgs // { inherit cargoArtifacts; });
 
+        docker = pkgs.dockerTools.buildImage {
+            name = "kafka-cost";
+            tag = "v1";
+            config = {
+              Entrypoint = [ (lib.getExe kafka-cost) ];
+            };
+          };
       in
       {
         devShells.default = pkgs.mkShell {
@@ -60,6 +67,7 @@
           programs.rustfmt.enable = true;
         };
         packages.default = kafka-cost;
+        packages.docker = docker;
       }
     );
 }
