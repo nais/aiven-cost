@@ -10,6 +10,7 @@ license = "MIT"
 anyhow = "1"
 bigdecimal = { version = "0.4.8", features = ["serde-json"] }
 chrono = { version = "0.4", features = ["serde"] }
+futures = "0.3.31"
 futures-util = "0.3"
 gcp-bigquery-client = "0.25"
 google-cloud-auth = "0.20"

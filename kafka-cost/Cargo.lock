@@ -941,6 +941,7 @@ dependencies = [
  "anyhow",
  "bigdecimal",
  "chrono",
+ "futures",
  "futures-util",
  "gcp-bigquery-client",
  "google-cloud-auth",

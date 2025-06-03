@@ -3,9 +3,15 @@ use std::collections::HashMap;
 use anyhow::{Result, bail};
 use bigdecimal::{BigDecimal, FromPrimitive, Zero};
 use chrono::Datelike;
+use futures::stream;
 use futures_util::future::try_join_all;
 use gcp_bigquery_client::{
-    model::{dataset::Dataset, query_request::QueryRequest, query_response::ResultSet, table::Table, table_data_insert_all_request::TableDataInsertAllRequest, table_field_schema::TableFieldSchema, table_schema::TableSchema}, Client
+    Client,
+    model::{
+        dataset::Dataset, query_request::QueryRequest, query_response::ResultSet, table::Table,
+        table_data_insert_all_request::TableDataInsertAllRequest,
+        table_field_schema::TableFieldSchema, table_schema::TableSchema,
+    },
 };
 use serde::Serialize;
 use tracing::info;
@@ -97,21 +103,26 @@ async fn extract(
         .into_iter()
         .flatten()
         .collect();
+
     let kafka_tiered_storage_cost_invoice_lines: Vec<_> = kafka_invoice_lines
         .iter()
         .filter(|&i| i.cost_type == KafkaInvoiceLineCostType::TieredStorage)
         .cloned()
         .collect();
+
     kafka_invoice_lines = try_join_all(
         kafka_invoice_lines
             .iter_mut()
             .filter(|i| i.cost_type == KafkaInvoiceLineCostType::Base)
             .map(|kafka_instance| {
                 let inv_typ = kafka_instance.kafka_instance.invoice_type.clone();
-                kafka_instance.populate_with_tags_from_aiven_api(aiven_client, inv_typ, cfg )
+                kafka_instance.populate_with_tags_from_aiven_api(aiven_client, inv_typ, cfg)
             }),
     )
-        .await?.into_iter().filter(|v| v.kafka_instance.tenant != "" ).collect::<Vec<AivenApiKafkaInvoiceLine>>();
+    .await?
+    .into_iter()
+    .filter(|v| v.kafka_instance.tenant != "")
+    .collect::<Vec<AivenApiKafkaInvoiceLine>>();
 
     assert!(
         &kafka_invoice_lines.iter().all(
@@ -129,6 +140,8 @@ async fn extract(
     );
 
     info!("Fetching topics per kafka invoice line");
+    // There's a bunch of suspicious try_join_alls in this codebase, they should probably be chunked
+    // or limited concurrency rather than a herd of 1000 threads hitting aiven.
     Ok((
         try_join_all(
             kafka_invoice_lines
@@ -337,63 +350,81 @@ fn transform(
     Ok(bigquery_data_rows)
 }
 
-
 async fn load(cfg: &Cfg, client: &Client, rows: TableDataInsertAllRequest) -> Result<()> {
     info!("creating bigquery client");
-    let ds = client.dataset().get(&cfg.bigquery_project_id, &cfg.bigquery_dataset).await?;
+    let ds = client
+        .dataset()
+        .get(&cfg.bigquery_project_id, &cfg.bigquery_dataset)
+        .await?;
 
     // This is backwards for reasons, if we fail at getting the table _for any_ reason we just try to create it.
-    if let Err(_) =
-        client.table().get(&cfg.bigquery_project_id, &cfg.bigquery_dataset, &cfg.bigquery_table, None).await {
-            info!("table doesn't exist, creating: {}", cfg.bigquery_table);
-            create_table(&cfg, &client, &ds).await?;
-        }
-
+    if let Err(_) = client
+        .table()
+        .get(
+            &cfg.bigquery_project_id,
+            &cfg.bigquery_dataset,
+            &cfg.bigquery_table,
+            None,
+        )
+        .await
+    {
+        info!("table doesn't exist, creating: {}", cfg.bigquery_table);
+        create_table(&cfg, &client, &ds).await?;
+    }
 
     let query_response = client
         .job()
         .query(
             &cfg.bigquery_project_id,
             QueryRequest::new(format!(
-                "DELETE FROM {}.{}.{} WHERE status NOT IN ('paid')", &cfg.bigquery_project_id, &cfg.bigquery_dataset, &cfg.bigquery_table
+                "DELETE FROM {}.{}.{} WHERE status NOT IN ('paid')",
+                &cfg.bigquery_project_id, &cfg.bigquery_dataset, &cfg.bigquery_table
             )),
         )
         .await?;
     let mut rs = ResultSet::new_from_query_response(query_response);
     while rs.next_row() {
-        info!("Number of rows deleted: {}", rs.get_i64_by_name("c")?.unwrap());
+        info!(
+            "Number of rows deleted: {}",
+            rs.get_i64_by_name("c")?.unwrap()
+        );
     }
 
     client
         .tabledata()
-        .insert_all(&ds.project_id(), &ds.dataset_id(), &cfg.bigquery_table, rows)
+        .insert_all(
+            &ds.project_id(),
+            &ds.dataset_id(),
+            &cfg.bigquery_table,
+            rows,
+        )
         .await?;
 
     Ok(())
 }
 
 async fn create_table(cfg: &Cfg, client: &Client, ds: &Dataset) -> Result<Table> {
-      info!("creating table");
-      ds
-        .create_table(
-            &client,
-            Table::from_dataset(
-                &ds,
-                &cfg.bigquery_table,
-                TableSchema::new(vec![
-                    TableFieldSchema::string("project_name"),
-                    TableFieldSchema::string("environment"),
-                    TableFieldSchema::string("team"),
-                    TableFieldSchema::string("status"),
-                    TableFieldSchema::string("service"),
-                    TableFieldSchema::string("tenant"),
-                    TableFieldSchema::big_numeric("cost"),
-                    TableFieldSchema::date("date"),
-                    TableFieldSchema::numeric("number_of_days"),
-                ]),
-            )
-            .friendly_name("kafka cost")
-            .description("kafka costs for topics per team weighted by usage")
+    info!("creating table");
+    ds.create_table(
+        &client,
+        Table::from_dataset(
+            &ds,
+            &cfg.bigquery_table,
+            TableSchema::new(vec![
+                TableFieldSchema::string("project_name"),
+                TableFieldSchema::string("environment"),
+                TableFieldSchema::string("team"),
+                TableFieldSchema::string("status"),
+                TableFieldSchema::string("service"),
+                TableFieldSchema::string("tenant"),
+                TableFieldSchema::big_numeric("cost"),
+                TableFieldSchema::date("date"),
+                TableFieldSchema::numeric("number_of_days"),
+            ]),
         )
-          .await.map_err(anyhow::Error::msg)
+        .friendly_name("kafka cost")
+        .description("kafka costs for topics per team weighted by usage"),
+    )
+    .await
+    .map_err(anyhow::Error::msg)
 }
