@@ -295,6 +295,9 @@ fn transform(
     // Not every Kafka instance has tiered storage, so we iterate separately
     // for the teams using it, calculate based on their tiered storage size
     for line in kafka_tiered_storage_cost_lines {
+        if line.kafka_instance.topics.is_empty() {
+            continue;
+        }
         let project_name = &line.project_name;
         let env = &line.kafka_instance.environment;
         let tenant = &line.kafka_instance.tenant;
@@ -336,8 +339,10 @@ fn transform(
 
 
 async fn load(cfg: &Cfg, client: &Client, rows: TableDataInsertAllRequest) -> Result<()> {
+    info!("creating bigquery client");
     let ds = client.dataset().get(&cfg.bigquery_project_id, &cfg.bigquery_dataset).await?;
 
+    // This is backwards for reasons, if we fail at getting the table _for any_ reason we just try to create it.
     if let Err(_) =
         client.table().get(&cfg.bigquery_project_id, &cfg.bigquery_dataset, &cfg.bigquery_table, None).await {
             info!("table doesn't exist, creating: {}", cfg.bigquery_table);
