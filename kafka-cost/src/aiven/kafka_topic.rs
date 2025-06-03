@@ -56,7 +56,7 @@ struct AivenApiKafkaTopicSpecificData {
     #[serde(deserialize_with = "tags_deserializer")]
     pub tags: HashMap<String, String>,
 }
-//   url: 'https://api.aiven.io/v1/project/%7Bproject%7D/service/%7Bservice_name%7D/topic',
+
 impl AivenApiKafkaTopic {
     pub fn from_json_obj(input: &serde_json::Value) -> Result<Self> {
         let result = match serde_json::from_value(input.clone()) {
