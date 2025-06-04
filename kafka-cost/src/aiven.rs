@@ -22,9 +22,9 @@ pub enum AivenInvoiceState {
 impl Display for AivenInvoiceState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            AivenInvoiceState::Paid => write!(f, "paid"),
-            AivenInvoiceState::Mailed => write!(f, "mailed"),
-            AivenInvoiceState::Estimate => write!(f, "estimate"),
+            Self::Paid => write!(f, "paid"),
+            Self::Mailed => write!(f, "mailed"),
+            Self::Estimate => write!(f, "estimate"),
         }
     }
 }
@@ -34,6 +34,7 @@ pub struct AivenInvoice {
     #[serde(rename(deserialize = "invoice_number"))]
     pub id: String,
     pub state: AivenInvoiceState,
+    pub period_end: DateTime<Utc>,
 }
 
 impl AivenInvoice {

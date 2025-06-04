@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use anyhow::{Result, bail};
 use bigdecimal::{BigDecimal, FromPrimitive, Zero};
-use chrono::Datelike;
+use chrono::{DateTime, Datelike, NaiveDate, Utc};
 use futures_util::future::try_join_all;
 
 use gcloud_bigquery::{
@@ -13,6 +13,7 @@ use gcloud_bigquery::{
         table::{Table, TableFieldSchema, TableFieldType, TableSchema},
         tabledata::insert_all::{InsertAllRequest, Row},
     },
+    storage::row::Row as ReadRow,
 };
 
 use serde::Serialize;
@@ -57,10 +58,7 @@ impl Cfg {
 }
 
 mod aiven;
-use aiven::{
-    AivenApiKafka, AivenApiKafkaInvoiceLine, AivenInvoice, AivenInvoiceState,
-    KafkaInvoiceLineCostType,
-};
+use aiven::{AivenApiKafka, AivenApiKafkaInvoiceLine, AivenInvoice, KafkaInvoiceLineCostType};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -71,9 +69,32 @@ async fn main() -> Result<()> {
 
     let (config, _) = ClientConfig::new_with_auth().await?;
     let bigquery_client = Client::new(config).await?;
+    let paid_invoices: Vec<BigQueryTableRowData> =
+        get_rows_in_bigquery_table(&cfg, &bigquery_client)
+            .await?
+            .into_iter()
+            .filter(|r| r.status == "paid")
+            .collect();
+
+    let date_of_latest_paid_invoice: DateTime<Utc> = DateTime::from_naive_utc_and_offset(
+        NaiveDate::parse_from_str(
+            paid_invoices
+                .iter()
+                .fold("1980-01", |current_oldest, current_invoice| {
+                    let current_invoice_date = &current_invoice.date;
+                    if **current_invoice_date > *current_oldest {
+                        return current_invoice_date;
+                    }
+                    current_oldest
+                }),
+            "%Y-%m",
+        )?
+        .into(),
+        Utc,
+    );
 
     let (kafka_base_cost_lines, kafka_base_tiered_storage_lines) =
-        extract(&aiven_client, &cfg).await?;
+        extract(&aiven_client, &cfg, &date_of_latest_paid_invoice).await?;
     let data = transform(&kafka_base_cost_lines, &kafka_base_tiered_storage_lines)?;
 
     load(&cfg, &bigquery_client, data).await?;
@@ -82,26 +103,70 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
+async fn get_rows_in_bigquery_table(
+    cfg: &Cfg,
+    bigquery_client: &Client,
+) -> Result<Vec<BigQueryTableRowData>> {
+    let table_reference = gcloud_bigquery::http::table::TableReference {
+        project_id: cfg.bigquery_project_id.clone(),
+        dataset_id: cfg.bigquery_dataset.clone(),
+        table_id: cfg.bigquery_table.clone(),
+    };
+    let mut reader = bigquery_client
+        .read_table::<ReadRow>(&table_reference, None)
+        .await?;
+    let mut rows = Vec::new();
+    while let Some(row) = reader.next().await? {
+        let project_name = row.column::<String>(0)?;
+        let environment = row.column::<String>(1)?;
+        let team = row.column::<String>(2)?;
+        let service = row.column::<String>(3)?;
+        let status = row.column::<String>(4)?;
+        let service_name = row.column::<String>(5)?;
+        let tenant = row.column::<String>(6)?;
+        let cost = row.column::<BigDecimal>(7)?;
+        let date = row.column::<String>(8)?;
+        rows.push(BigQueryTableRowData {
+            project_name,
+            environment,
+            team,
+            service,
+            status,
+            service_name,
+            tenant,
+            cost,
+            date,
+            ..Default::default()
+        });
+    }
+    Ok(rows)
+}
+
 async fn extract(
     aiven_client: &reqwest::Client,
     cfg: &Cfg,
+    date_of_latest_paid_invoice: &DateTime<Utc>,
 ) -> Result<(Vec<AivenApiKafkaInvoiceLine>, Vec<AivenApiKafkaInvoiceLine>)> {
     info!("Fetching invoices");
-    let invoices: Vec<_> = AivenInvoice::from_aiven_api(aiven_client, cfg).await?;
+    let invoices: Vec<_> = AivenInvoice::from_aiven_api(aiven_client, cfg)
+        .await?
+        .into_iter()
+        .filter(|invoice| invoice.period_end < *date_of_latest_paid_invoice)
+        .collect();
 
-    let unpaid_invoices: Vec<_> = invoices
+    let without_already_paid_invoices: Vec<_> = invoices
         .iter()
-        .filter(|i| i.state == AivenInvoiceState::Estimate)
+        .filter(|invoice| invoice.period_end < *date_of_latest_paid_invoice)
         .collect();
     info!(
-        "Out of {} invoice(s) from Aiven, {} is/are unpaid/estimate(s)",
+        "Out of {} invoice(s) from Aiven, {} have not already been paid in BigQuery",
         invoices.len(),
-        unpaid_invoices.len(),
+        without_already_paid_invoices.len(),
     );
 
     info!("Getting invoice lines for kakfa");
     let mut kafka_invoice_lines: Vec<AivenApiKafkaInvoiceLine> =
-        try_join_all(unpaid_invoices.iter().map(|invoice| {
+        try_join_all(without_already_paid_invoices.iter().map(|invoice| {
             AivenApiKafkaInvoiceLine::from_aiven_api(aiven_client, cfg, &invoice.id, &invoice.state)
         }))
         .await?
@@ -185,7 +250,7 @@ struct DataUsage {
     tiered_size: u64,
 }
 
-#[derive(Serialize, Debug, PartialEq, Eq, Clone)]
+#[derive(Serialize, Debug, Default, PartialEq, Eq, Clone)]
 struct BigQueryTableRowData {
     project_name: String,
     environment: String,
@@ -207,7 +272,7 @@ fn big_decimal_truncat_serialization<S>(
 where
     S: serde::Serializer,
 {
-    serializer.serialize_str(&format!("{:.2}", value))
+    serializer.serialize_str(&format!("{value:.2}"))
 }
 
 fn transform(
@@ -366,13 +431,30 @@ fn transform(
         }
     }
 
-    Ok(bigquery_data_rows.into_iter()
-        .filter(|r| !r.team.contains("JOINTHIS")) // Kakfa streamable join metadata
-        .filter(|r| !r.team.ends_with("repartition")) // repartitions for streams
-        .filter(|r| !r.team.ends_with("changelog")) // changelogs for streams
-        .filter(|r| !r.team.ends_with("JOINOTHER")) // Kafja strems join metadata
-        .filter(|r| !r.team.starts_with("__")) // kafka connect meta topic, __connect_configs, __connect_offsets, __connect_status etc
-        .collect::<Vec<BigQueryTableRowData>>())
+    let should_not_contain = [
+        // Kafka streams join metadata
+        "JOINTHIS",
+        "JOINOTHER",
+    ];
+    let should_not_start_with = [
+        "__", // kafka connect meta topic, __connect_configs, __connect_offsets, __connect_status etc
+    ];
+    let should_not_end_with = [
+        // Kafka streams meta/internals
+        "-repartition",
+        "-changelog",
+    ];
+
+    // There are topic names this program did not correctly attribute to teams.
+    // Here's where we filter these topics (now team names at this stage in the program) out.
+    let cleaned_topics: Vec<_> = bigquery_data_rows
+        .into_iter()
+        .filter(|r| !should_not_contain.iter().any(|c| r.team.contains(c)))
+        .filter(|r| !should_not_start_with.iter().any(|c| r.team.starts_with(c)))
+        .filter(|r| !should_not_end_with.iter().any(|c| r.team.ends_with(c)))
+        .collect();
+
+    Ok(cleaned_topics)
 }
 
 async fn load(cfg: &Cfg, client: &Client, rows: Vec<BigQueryTableRowData>) -> Result<()> {
