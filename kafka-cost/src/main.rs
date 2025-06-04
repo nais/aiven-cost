@@ -3,13 +3,12 @@ use std::collections::HashMap;
 use anyhow::{Result, bail};
 use bigdecimal::{BigDecimal, FromPrimitive, Zero};
 use chrono::Datelike;
-use futures::stream;
 use futures_util::future::try_join_all;
 
 use gcloud_bigquery::{
     client::{Client, ClientConfig},
     http::{
-        dataset::Dataset,
+        bigquery_table_client::BigqueryTableClient,
         job::query::QueryRequest,
         table::{Table, TableFieldSchema, TableFieldType, TableSchema},
         tabledata::insert_all::Row,
@@ -70,8 +69,8 @@ async fn main() -> Result<()> {
     let cfg = Cfg::new();
     let aiven_client = client()?;
 
-    let (config, project_id) = ClientConfig::new_with_auth().await.unwrap();
-    let bigquery_client = Client::new(config).await.unwrap();
+    let (config, _) = ClientConfig::new_with_auth().await?;
+    let bigquery_client = Client::new(config).await?;
 
     let (kafka_base_cost_lines, kafka_base_tiered_storage_lines) =
         extract(&aiven_client, &cfg).await?;
@@ -126,7 +125,7 @@ async fn extract(
     )
     .await?
     .into_iter()
-    .filter(|v| v.kafka_instance.tenant != "")
+    .filter(|v| !v.kafka_instance.tenant.is_empty())
     .collect::<Vec<AivenApiKafkaInvoiceLine>>();
 
     assert!(
@@ -281,8 +280,14 @@ fn transform(
             let Some(num_teams) = BigDecimal::from_usize(instance.teams.len()) else {
                 bail!("Unable to convert to BigDecimal: {}", instance.teams.len())
             };
+            info!(
+                "calculating kafka cost for {} teams for {}/{}/{}",
+                instance.teams.len(),
+                tenant_env.tenant,
+                tenant_env.environment,
+                kafka_name
+            );
             for (team_name, team_data_usage) in &instance.teams {
-                info!("calculating kafka cost for {}", team_name);
                 let half_base_cost = instance.base_cost.clone() / 2;
                 let team_divided_base_cost = &half_base_cost / num_teams.clone();
 
@@ -350,12 +355,6 @@ fn transform(
 }
 
 async fn load(cfg: &Cfg, client: &Client, rows: Vec<BigQueryTableRowData>) -> Result<()> {
-    info!("creating bigquery client");
-    let ds = client
-        .dataset()
-        .get(&cfg.bigquery_project_id, &cfg.bigquery_dataset)
-        .await?;
-
     let actual_rows = rows
         .into_iter()
         .map(|r| Row {
@@ -365,26 +364,28 @@ async fn load(cfg: &Cfg, client: &Client, rows: Vec<BigQueryTableRowData>) -> Re
         .collect();
 
     // This is backwards for reasons, if we fail at getting the table _for any_ reason we just try to create it.
-    if let Err(_) = client
+    if (client
         .table()
         .get(
             &cfg.bigquery_project_id,
             &cfg.bigquery_dataset,
             &cfg.bigquery_table,
         )
-        .await
+        .await)
+        .is_err()
     {
         info!("table doesn't exist, creating: {}", cfg.bigquery_table);
-        create_table(&cfg, &client, &ds).await?;
+        create_table(cfg, client.table()).await?;
     }
 
+    info!("deleting rows with status not in 'paid'");
     let query_response = client
         .job()
         .query(
             &cfg.bigquery_project_id,
             &QueryRequest {
                 query: format!(
-                    "DELETE FROM {}.{}.{} WHERE status NOT IN ('paid')",
+                    "DELETE FROM `{}.{}.{}` WHERE status NOT IN ('paid')",
                     &cfg.bigquery_project_id, &cfg.bigquery_dataset, &cfg.bigquery_table
                 ),
                 ..Default::default()
@@ -417,14 +418,16 @@ fn string_field(name: &str) -> TableFieldSchema {
         ..Default::default()
     }
 }
-async fn create_table(cfg: &Cfg, client: &Client, ds: &Dataset) -> Result<Table> {
+async fn create_table(cfg: &Cfg, client: &BigqueryTableClient) -> Result<Table> {
     info!("creating table");
-    ds.create_table(
-        &client,
-        Table::from_dataset(
-            &ds,
-            &cfg.bigquery_table,
-            TableSchema {fields: (vec![
+    let table = Table {
+        table_reference: gcloud_bigquery::http::table::TableReference {
+            project_id: cfg.bigquery_project_id.clone(),
+            dataset_id: cfg.bigquery_dataset.clone(),
+            table_id: cfg.bigquery_table.clone(),
+        },
+        schema: Some(TableSchema {
+            fields: vec![
                 string_field("name"),
                 string_field("environment"),
                 string_field("team"),
@@ -446,11 +449,13 @@ async fn create_table(cfg: &Cfg, client: &Client, ds: &Dataset) -> Result<Table>
                     data_type: TableFieldType::Numeric,
                     ..Default::default()
                 },
-            ])},
-                )
-        .friendly_name("kafka cost")
-        .description("kafka costs for topics per team weighted by usage"),
-    )
-    .await
-    .map_err(anyhow::Error::msg)
+            ],
+        }),
+        ..Default::default()
+    };
+
+    client
+        .create(&table)
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to create table: {}", e))
 }
