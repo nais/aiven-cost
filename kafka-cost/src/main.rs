@@ -367,11 +367,11 @@ fn transform(
     }
 
     Ok(bigquery_data_rows.into_iter()
-        .filter(|r| r.team.contains("JOINTHIS")) // Kakfa streamable join metadata
-        .filter(|r| r.team.ends_with("repartition")) // repartitions for streams
-        .filter(|r| r.team.ends_with("changelog")) // changelogs for streams
-        .filter(|r| r.team.ends_with("JOINOTHER")) // Kafja strems join metadata
-        .filter(|r| r.team.starts_with("__")) // kafka connect meta topic, __connect_configs, __connect_offsets, __connect_status etc
+        .filter(|r| !r.team.contains("JOINTHIS")) // Kakfa streamable join metadata
+        .filter(|r| !r.team.ends_with("repartition")) // repartitions for streams
+        .filter(|r| !r.team.ends_with("changelog")) // changelogs for streams
+        .filter(|r| !r.team.ends_with("JOINOTHER")) // Kafja strems join metadata
+        .filter(|r| !r.team.starts_with("__")) // kafka connect meta topic, __connect_configs, __connect_offsets, __connect_status etc
         .collect::<Vec<BigQueryTableRowData>>())
 }
 
