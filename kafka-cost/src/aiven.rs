@@ -73,9 +73,7 @@ impl AivenInvoice {
             .get("invoices")
             .and_then(|invoices| invoices.as_array())
         else {
-            bail!(
-                "missing field name:\n\t`invoices`\n\t\tGET {response_status} {url}"
-            )
+            bail!("missing field name:\n\t`invoices`\n\t\tGET {response_status} {url}")
         };
         info!(
             "Collected {} invoice(s) from Aiven's API",
@@ -97,6 +95,7 @@ pub struct AivenApiKafkaInvoiceLine {
     pub cost_type: KafkaInvoiceLineCostType,
     pub service_name: String,
     pub project_name: String,
+    pub invoice_state: String,
     #[serde(skip)]
     pub kafka_instance: AivenApiKafka,
     pub line_total_local: BigDecimal,
@@ -148,7 +147,10 @@ impl AivenApiKafkaInvoiceLine {
         invoice_type: String,
         cfg: &Cfg,
     ) -> Result<Self> {
-        info!("getting tags for {} - {}", &self.project_name, &self.service_name);
+        info!(
+            "getting tags for {} - {}",
+            &self.project_name, &self.service_name
+        );
         self.kafka_instance = AivenApiKafka::from_aiven_api(
             reqwest_client,
             cfg,
@@ -165,6 +167,7 @@ impl AivenApiKafkaInvoiceLine {
         cfg: &Cfg,
 
         invoice_id: &str,
+        invoice_state: &AivenInvoiceState,
     ) -> Result<Vec<Self>> {
         let url = format!(
             "https://api.aiven.io/v1/billing-group/{}/invoice/{}/lines",
@@ -185,9 +188,7 @@ impl AivenApiKafkaInvoiceLine {
             .get("lines")
             .and_then(|invoices| invoices.as_array())
         else {
-            bail!(
-                "missing field name:\n\t`lines`\n\t\tGET {response_status} {url}"
-            )
+            bail!("missing field name:\n\t`lines`\n\t\tGET {response_status} {url}")
         };
 
         // Keep only Kafka related invoices
@@ -199,7 +200,10 @@ impl AivenApiKafkaInvoiceLine {
             })
             .map(|json| {
                 if let Some(map) = json.as_object_mut() {
-                    map.insert("invoice_id".to_string(), serde_json::to_value(invoice_id)?);
+                    map.insert(
+                        "invoice_state".to_string(),
+                        serde_json::to_value(invoice_state.to_string())?,
+                    );
                 }
 
                 Ok(json)
@@ -241,13 +245,11 @@ pub async fn get_tags_of_aiven_service(
         info!("{}, - does not exist", service_name);
         // a 404 is not a failure here, it just means it didn't exist when we asked about it
         // it could have been deleted previously but still exist on the invoice
-        return Ok(None)
+        return Ok(None);
     }
 
     let Some(response_tags) = response_body.get("tags") else {
-        bail!(
-            "missing field name:\n\t`tags`\n\t\tGET {response_status} {url}"
-        )
+        bail!("missing field name:\n\t`tags`\n\t\tGET {response_status} {url}")
     };
     Ok(Some(response_tags.clone()))
 }

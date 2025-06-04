@@ -11,7 +11,7 @@ use gcloud_bigquery::{
         bigquery_table_client::BigqueryTableClient,
         job::query::QueryRequest,
         table::{Table, TableFieldSchema, TableFieldType, TableSchema},
-        tabledata::insert_all::Row,
+        tabledata::insert_all::{InsertAllRequest, Row},
     },
 };
 
@@ -51,7 +51,7 @@ impl Cfg {
             // BQ stuff
             bigquery_project_id: "nais-io".into(),
             bigquery_dataset: "aiven_cost_regional".into(),
-            bigquery_table: "kafka-cost".into(),
+            bigquery_table: "kafka_cost".into(),
         }
     }
 }
@@ -78,6 +78,7 @@ async fn main() -> Result<()> {
 
     load(&cfg, &bigquery_client, data).await?;
 
+    info!("kafka-cost completed successfully");
     Ok(())
 }
 
@@ -101,7 +102,7 @@ async fn extract(
     info!("Getting invoice lines for kakfa");
     let mut kafka_invoice_lines: Vec<AivenApiKafkaInvoiceLine> =
         try_join_all(unpaid_invoices.iter().map(|invoice| {
-            AivenApiKafkaInvoiceLine::from_aiven_api(aiven_client, cfg, &invoice.id)
+            AivenApiKafkaInvoiceLine::from_aiven_api(aiven_client, cfg, &invoice.id, &invoice.state)
         }))
         .await?
         .into_iter()
@@ -119,7 +120,7 @@ async fn extract(
             .iter_mut()
             .filter(|i| i.cost_type == KafkaInvoiceLineCostType::Base)
             .map(|kafka_instance| {
-                let inv_typ = kafka_instance.kafka_instance.invoice_type.clone();
+                let inv_typ = "should be estimated".to_string();
                 kafka_instance.populate_with_tags_from_aiven_api(aiven_client, inv_typ, cfg)
             }),
     )
@@ -172,10 +173,10 @@ type KafkaInstanceName = String;
 struct KafkaInstance {
     base_cost: BigDecimal,
     aggregate_data_usage: DataUsage,
-    invoice_type: String,
+    invoice_state: String,
     teams: HashMap<TeamName, DataUsage>,
     year_month: String,
-    days_in_month: String,
+    days_in_month: u8,
 }
 
 #[derive(Eq, PartialEq, Debug, Default, Clone)]
@@ -193,9 +194,20 @@ struct BigQueryTableRowData {
     status: String,
     service_name: String,
     tenant: String,
+    #[serde(serialize_with = "big_decimal_truncat_serialization")]
     cost: BigDecimal,
     date: String,
-    number_of_days: String,
+    number_of_days: u8,
+}
+
+fn big_decimal_truncat_serialization<S>(
+    value: &BigDecimal,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    serializer.serialize_str(&format!("{:.2}", value))
 }
 
 fn transform(
@@ -265,10 +277,10 @@ fn transform(
                     },
                 ),
                 teams,
-                invoice_type: line.kafka_instance.invoice_type.to_string(),
+                invoice_state: line.invoice_state.clone(),
                 base_cost: line.line_total_local.clone(),
                 year_month: line.timestamp_begin.format("%Y-%m").to_string(),
-                days_in_month: line.timestamp_begin.num_days_in_month().to_string(),
+                days_in_month: line.timestamp_begin.num_days_in_month(),
             },
         );
     }
@@ -301,12 +313,12 @@ fn transform(
                     environment: tenant_env.environment.clone(),
                     team: team_name.clone(),
                     service: String::from("kafka-base"),
-                    status: instance.invoice_type.to_string(),
+                    status: instance.invoice_state.to_string(),
                     service_name: kafka_name.clone(),
                     tenant: tenant_env.tenant.clone(),
                     cost: team_divided_base_cost + storage_weighted_storage_cost,
                     date: instance.year_month.clone(),
-                    number_of_days: instance.days_in_month.clone(),
+                    number_of_days: instance.days_in_month,
                 });
             }
         }
@@ -341,12 +353,12 @@ fn transform(
                 environment: env.to_owned(),
                 team: name.to_owned(),
                 service: String::from("kafka-tiered"),
-                status: instance.invoice_type.to_string(),
+                status: instance.invoice_state.to_string(),
                 service_name: service_name.to_owned(),
                 tenant: tenant.to_owned(),
                 cost: &line.line_total_local * (usage.tiered_size / total_tiered_storage),
                 date: line.timestamp_begin.format("%Y-%m").to_string(),
-                number_of_days: line.timestamp_begin.num_days_in_month().to_string(),
+                number_of_days: line.timestamp_begin.num_days_in_month(),
             });
         }
     }
@@ -355,7 +367,7 @@ fn transform(
 }
 
 async fn load(cfg: &Cfg, client: &Client, rows: Vec<BigQueryTableRowData>) -> Result<()> {
-    let actual_rows = rows
+    let actual_rows: Vec<Row<BigQueryTableRowData>> = rows
         .into_iter()
         .map(|r| Row {
             insert_id: None,
@@ -392,21 +404,28 @@ async fn load(cfg: &Cfg, client: &Client, rows: Vec<BigQueryTableRowData>) -> Re
             },
         )
         .await?;
-    let rs = query_response.total_rows.expect("we got rows");
-    info!("Number of rows deleted: {}", rs);
+    if let Some(rs) = query_response.total_rows {
+        info!("Number of rows deleted: {}", rs);
+    }
 
-    client
+    info!(
+        "inserting {} rows into table: {}",
+        actual_rows.len(),
+        cfg.bigquery_table
+    );
+    let response = client
         .tabledata()
         .insert(
             &cfg.bigquery_project_id,
             &cfg.bigquery_dataset,
             &cfg.bigquery_table,
-            &gcloud_bigquery::http::tabledata::insert_all::InsertAllRequest {
+            &InsertAllRequest {
                 rows: actual_rows,
                 ..Default::default()
             },
         )
         .await?;
+    dbg!(response);
 
     Ok(())
 }
@@ -428,25 +447,22 @@ async fn create_table(cfg: &Cfg, client: &BigqueryTableClient) -> Result<Table> 
         },
         schema: Some(TableSchema {
             fields: vec![
-                string_field("name"),
+                string_field("project_name"),
                 string_field("environment"),
                 string_field("team"),
-                string_field("status"),
                 string_field("service"),
+                string_field("status"),
+                string_field("service_name"),
                 string_field("tenant"),
                 TableFieldSchema {
                     name: "cost".to_owned(),
                     data_type: TableFieldType::Bignumeric,
                     ..Default::default()
                 },
-                TableFieldSchema {
-                    name: "date".to_owned(),
-                    data_type: TableFieldType::Date,
-                    ..Default::default()
-                },
+                string_field("date"),
                 TableFieldSchema {
                     name: "number_of_days".to_owned(),
-                    data_type: TableFieldType::Numeric,
+                    data_type: TableFieldType::Integer,
                     ..Default::default()
                 },
             ],
