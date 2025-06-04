@@ -218,7 +218,10 @@ fn transform(
     fn aggregate_topic_usage_by_team(
         kafka_instance: &AivenApiKafka,
     ) -> Result<HashMap<TeamName, DataUsage>> {
-        info!("transforming invoice data");
+        info!(
+            "aggregating usage per team for {}",
+            kafka_instance.service_name
+        );
         kafka_instance
             .topics
             .iter()
