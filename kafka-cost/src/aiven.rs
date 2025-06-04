@@ -208,9 +208,9 @@ impl AivenApiKafkaInvoiceLine {
             .collect::<Result<Vec<_>>>()?;
 
         info!(
-            "Invoice ID {invoice_id} had {} line(s), of which {:?} were kafka related",
+            "invoice id {invoice_id} had {} line(s), of which {:?} were kafka related",
             &response_invoice_lines.len(),
-            &kafka_invoice_lines
+            &kafka_invoice_lines.len()
         );
 
         Self::from_json_list(&kafka_invoice_lines)

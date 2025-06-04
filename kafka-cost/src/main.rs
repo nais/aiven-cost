@@ -5,14 +5,17 @@ use bigdecimal::{BigDecimal, FromPrimitive, Zero};
 use chrono::Datelike;
 use futures::stream;
 use futures_util::future::try_join_all;
-use gcp_bigquery_client::{
-    Client,
-    model::{
-        dataset::Dataset, query_request::QueryRequest, query_response::ResultSet, table::Table,
-        table_data_insert_all_request::TableDataInsertAllRequest,
-        table_field_schema::TableFieldSchema, table_schema::TableSchema,
+
+use gcloud_bigquery::{
+    client::{Client, ClientConfig},
+    http::{
+        dataset::Dataset,
+        job::query::QueryRequest,
+        table::{Table, TableFieldSchema, TableFieldType, TableSchema},
+        tabledata::insert_all::Row,
     },
 };
+
 use serde::Serialize;
 use tracing::info;
 
@@ -66,7 +69,9 @@ async fn main() -> Result<()> {
     info!("started kafka-cost");
     let cfg = Cfg::new();
     let aiven_client = client()?;
-    let bigquery_client = Client::from_application_default_credentials().await?;
+
+    let (config, project_id) = ClientConfig::new_with_auth().await.unwrap();
+    let bigquery_client = Client::new(config).await.unwrap();
 
     let (kafka_base_cost_lines, kafka_base_tiered_storage_lines) =
         extract(&aiven_client, &cfg).await?;
@@ -197,7 +202,7 @@ struct BigQueryTableRowData {
 fn transform(
     kafka_base_cost_lines: &[AivenApiKafkaInvoiceLine],
     kafka_tiered_storage_cost_lines: &[AivenApiKafkaInvoiceLine],
-) -> Result<TableDataInsertAllRequest> {
+) -> Result<Vec<BigQueryTableRowData>> {
     /// Sum up all topics' sizes per team
     fn aggregate_topic_usage_by_team(
         kafka_instance: &AivenApiKafka,
@@ -270,7 +275,7 @@ fn transform(
     }
 
     // With the collection we can calcuate each teams usage of Kafka by their topics combined byte size
-    let mut bigquery_data_rows = TableDataInsertAllRequest::new();
+    let mut bigquery_data_rows = Vec::new();
     for (tenant_env, kafka_instances) in &tenant_envs {
         for (kafka_name, instance) in kafka_instances {
             let Some(num_teams) = BigDecimal::from_usize(instance.teams.len()) else {
@@ -286,21 +291,18 @@ fn transform(
                 let storage_weighted_storage_cost =
                     &team_divided_base_cost + (half_base_cost * storage_weight);
 
-                bigquery_data_rows.add_row(
-                    None,
-                    BigQueryTableRowData {
-                        project_name: tenant_env.project_name.clone(),
-                        environment: tenant_env.environment.clone(),
-                        team: team_name.clone(),
-                        service: String::from("kafka-base"),
-                        status: instance.invoice_type.to_string(),
-                        service_name: kafka_name.clone(),
-                        tenant: tenant_env.tenant.clone(),
-                        cost: team_divided_base_cost + storage_weighted_storage_cost,
-                        date: instance.year_month.clone(),
-                        number_of_days: instance.days_in_month.clone(),
-                    },
-                )?;
+                bigquery_data_rows.push(BigQueryTableRowData {
+                    project_name: tenant_env.project_name.clone(),
+                    environment: tenant_env.environment.clone(),
+                    team: team_name.clone(),
+                    service: String::from("kafka-base"),
+                    status: instance.invoice_type.to_string(),
+                    service_name: kafka_name.clone(),
+                    tenant: tenant_env.tenant.clone(),
+                    cost: team_divided_base_cost + storage_weighted_storage_cost,
+                    date: instance.year_month.clone(),
+                    number_of_days: instance.days_in_month.clone(),
+                });
             }
         }
     }
@@ -329,33 +331,38 @@ fn transform(
                 continue;
             }
             info!("adding tiered storage cost for {}", name);
-            bigquery_data_rows.add_row(
-                None,
-                BigQueryTableRowData {
-                    project_name: project_name.to_owned(),
-                    environment: env.to_owned(),
-                    team: name.to_owned(),
-                    service: String::from("kafka-tiered"),
-                    status: instance.invoice_type.to_string(),
-                    service_name: service_name.to_owned(),
-                    tenant: tenant.to_owned(),
-                    cost: &line.line_total_local * (usage.tiered_size / total_tiered_storage),
-                    date: line.timestamp_begin.format("%Y-%m").to_string(),
-                    number_of_days: line.timestamp_begin.num_days_in_month().to_string(),
-                },
-            )?;
+            bigquery_data_rows.push(BigQueryTableRowData {
+                project_name: project_name.to_owned(),
+                environment: env.to_owned(),
+                team: name.to_owned(),
+                service: String::from("kafka-tiered"),
+                status: instance.invoice_type.to_string(),
+                service_name: service_name.to_owned(),
+                tenant: tenant.to_owned(),
+                cost: &line.line_total_local * (usage.tiered_size / total_tiered_storage),
+                date: line.timestamp_begin.format("%Y-%m").to_string(),
+                number_of_days: line.timestamp_begin.num_days_in_month().to_string(),
+            });
         }
     }
 
     Ok(bigquery_data_rows)
 }
 
-async fn load(cfg: &Cfg, client: &Client, rows: TableDataInsertAllRequest) -> Result<()> {
+async fn load(cfg: &Cfg, client: &Client, rows: Vec<BigQueryTableRowData>) -> Result<()> {
     info!("creating bigquery client");
     let ds = client
         .dataset()
         .get(&cfg.bigquery_project_id, &cfg.bigquery_dataset)
         .await?;
+
+    let actual_rows = rows
+        .into_iter()
+        .map(|r| Row {
+            insert_id: None,
+            json: r,
+        })
+        .collect();
 
     // This is backwards for reasons, if we fail at getting the table _for any_ reason we just try to create it.
     if let Err(_) = client
@@ -364,7 +371,6 @@ async fn load(cfg: &Cfg, client: &Client, rows: TableDataInsertAllRequest) -> Re
             &cfg.bigquery_project_id,
             &cfg.bigquery_dataset,
             &cfg.bigquery_table,
-            None,
         )
         .await
     {
@@ -376,33 +382,41 @@ async fn load(cfg: &Cfg, client: &Client, rows: TableDataInsertAllRequest) -> Re
         .job()
         .query(
             &cfg.bigquery_project_id,
-            QueryRequest::new(format!(
-                "DELETE FROM {}.{}.{} WHERE status NOT IN ('paid')",
-                &cfg.bigquery_project_id, &cfg.bigquery_dataset, &cfg.bigquery_table
-            )),
+            &QueryRequest {
+                query: format!(
+                    "DELETE FROM {}.{}.{} WHERE status NOT IN ('paid')",
+                    &cfg.bigquery_project_id, &cfg.bigquery_dataset, &cfg.bigquery_table
+                ),
+                ..Default::default()
+            },
         )
         .await?;
-    let mut rs = ResultSet::new_from_query_response(query_response);
-    while rs.next_row() {
-        info!(
-            "Number of rows deleted: {}",
-            rs.get_i64_by_name("c")?.unwrap()
-        );
-    }
+    let rs = query_response.total_rows.expect("we got rows");
+    info!("Number of rows deleted: {}", rs);
 
     client
         .tabledata()
-        .insert_all(
-            &ds.project_id(),
-            &ds.dataset_id(),
+        .insert(
+            &cfg.bigquery_project_id,
+            &cfg.bigquery_dataset,
             &cfg.bigquery_table,
-            rows,
+            &gcloud_bigquery::http::tabledata::insert_all::InsertAllRequest {
+                rows: actual_rows,
+                ..Default::default()
+            },
         )
         .await?;
 
     Ok(())
 }
 
+fn string_field(name: &str) -> TableFieldSchema {
+    TableFieldSchema {
+        name: name.to_owned(),
+        data_type: TableFieldType::String,
+        ..Default::default()
+    }
+}
 async fn create_table(cfg: &Cfg, client: &Client, ds: &Dataset) -> Result<Table> {
     info!("creating table");
     ds.create_table(
@@ -410,18 +424,30 @@ async fn create_table(cfg: &Cfg, client: &Client, ds: &Dataset) -> Result<Table>
         Table::from_dataset(
             &ds,
             &cfg.bigquery_table,
-            TableSchema::new(vec![
-                TableFieldSchema::string("project_name"),
-                TableFieldSchema::string("environment"),
-                TableFieldSchema::string("team"),
-                TableFieldSchema::string("status"),
-                TableFieldSchema::string("service"),
-                TableFieldSchema::string("tenant"),
-                TableFieldSchema::big_numeric("cost"),
-                TableFieldSchema::date("date"),
-                TableFieldSchema::numeric("number_of_days"),
-            ]),
-        )
+            TableSchema {fields: (vec![
+                string_field("name"),
+                string_field("environment"),
+                string_field("team"),
+                string_field("status"),
+                string_field("service"),
+                string_field("tenant"),
+                TableFieldSchema {
+                    name: "cost".to_owned(),
+                    data_type: TableFieldType::Bignumeric,
+                    ..Default::default()
+                },
+                TableFieldSchema {
+                    name: "date".to_owned(),
+                    data_type: TableFieldType::Date,
+                    ..Default::default()
+                },
+                TableFieldSchema {
+                    name: "number_of_days".to_owned(),
+                    data_type: TableFieldType::Numeric,
+                    ..Default::default()
+                },
+            ])},
+                )
         .friendly_name("kafka cost")
         .description("kafka costs for topics per team weighted by usage"),
     )
