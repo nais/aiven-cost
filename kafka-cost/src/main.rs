@@ -76,6 +76,7 @@ async fn main() -> Result<()> {
             .filter(|r| r.status == "paid")
             .collect();
 
+    info!("Next we are finding the latest paid invoice line in BigQuery");
     let date_of_latest_paid_invoice: DateTime<Utc> = DateTime::from_naive_utc_and_offset(
         NaiveDate::parse_from_str(
             paid_invoices
@@ -92,6 +93,10 @@ async fn main() -> Result<()> {
         .into(),
         Utc,
     );
+    info!(
+        "Latest paid invoice date in BigQuery: {}",
+        date_of_latest_paid_invoice
+    );
 
     let (kafka_base_cost_lines, kafka_base_tiered_storage_lines) =
         extract(&aiven_client, &cfg, &date_of_latest_paid_invoice).await?;
@@ -107,6 +112,7 @@ async fn get_rows_in_bigquery_table(
     cfg: &Cfg,
     bigquery_client: &Client,
 ) -> Result<Vec<BigQueryTableRowData>> {
+    info!("Fetching rows from BigQuery table: {}", cfg.bigquery_table);
     let table_reference = gcloud_bigquery::http::table::TableReference {
         project_id: cfg.bigquery_project_id.clone(),
         dataset_id: cfg.bigquery_dataset.clone(),
@@ -514,7 +520,10 @@ async fn load(cfg: &Cfg, client: &Client, rows: Vec<BigQueryTableRowData>) -> Re
             },
         )
         .await?;
-    dbg!(response);
+    response
+        .insert_errors
+        .into_iter()
+        .for_each(|e| info!("Error inserting row: {:?}", e));
 
     Ok(())
 }

@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use anyhow::{Result, bail};
 use futures_util::future::try_join_all;
 use serde::Deserialize;
+use tracing::info;
 
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(rename_all = "UPPERCASE")]
@@ -146,6 +147,10 @@ impl AivenApiKafkaTopic {
             bail!("missing field name:\n\t`{key}`\n\t\tGET {response_status} {url}")
         };
 
+        info!(
+            "Populating {} topics with partitions for {project_name} - {kafka_name}",
+            response_topics.len()
+        );
         try_join_all(
             Self::from_json_list(response_topics)?
                 .iter_mut()

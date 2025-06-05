@@ -243,7 +243,7 @@ pub async fn get_tags_of_aiven_service(
     };
 
     if response_status == &reqwest::StatusCode::NOT_FOUND {
-        info!("{}, - does not exist", service_name);
+        info!("The Kafka instance {}, - does not exist", service_name);
         // a 404 is not a failure here, it just means it didn't exist when we asked about it
         // it could have been deleted previously but still exist on the invoice
         return Ok(None);
