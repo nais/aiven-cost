@@ -16,8 +16,9 @@ jobs:
       contents: "read"
       id-token: "write"
     steps:
-      - name: nix-build
-        uses: nais/nais-nix-action@main
+      - uses: actions/checkout@v4
+      - uses: nais/nais-nix-action@main
+        name: nix-build
         id: nix-build
         with:
           team: nais
