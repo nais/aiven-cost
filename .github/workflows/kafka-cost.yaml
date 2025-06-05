@@ -31,7 +31,7 @@ jobs:
   deploy_aiven-cost:
     if: github.ref == 'refs/heads/main'
     runs-on: [fasit-deploy]
-    needs: [build_and_push]
+    needs: [build]
     permissions:
       contents: read
       id-token: write
