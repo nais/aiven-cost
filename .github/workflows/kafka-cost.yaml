@@ -28,24 +28,32 @@ jobs:
     outputs:
       image: ${{ steps.nix-build.outputs.image }}
 
-  deploy:
-    name: deploy
-    needs: build
-    runs-on: ubuntu-latest
+  deploy_aiven-cost:
+    if: github.ref == 'refs/heads/main'
+    runs-on: [fasit-deploy]
+    needs: [build_and_push]
     permissions:
-      packages: "write"
-      contents: "read"
-      id-token: "write"
+      contents: read
+      id-token: write
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout aiven-cost
+        uses: actions/checkout@v4
       - name: Download spec
         uses: actions/download-artifact@v4
         with:
           name: spec.yaml
-
-      - name: Deploy-prod
-        uses: nais/deploy/actions/deploy@v2
-        env:
-          IMAGE: ${{ steps.build.outputs.image }}
-          CLUSTER: prod-gcp
-          RESOURCE: spec.yaml
+      - id: auth
+        name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.NAIS_IO_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: gh-aiven-cost@nais-io.iam.gserviceaccount.com
+          token_format: access_token
+      - name: Get credentials
+        shell: bash
+        run: |
+          gcloud container clusters get-credentials nais-io --project nais-io --region europe-north1
+      - name: deploy aiven-cost
+        shell: bash
+        run: |
+         kubectl apply -f spec.yaml
