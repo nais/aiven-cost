@@ -1,14 +1,9 @@
 name: build
 on:
   push:
-    paths-ignore:
-      - "**.md"
-      - "**.go"
-      - "**/go.*"
-      - "**.Dockerfile"
-      - ".env*"
     paths:
       - "flake.*"
+      - "**.nix"
       - "kafka-cost/**"
 
 jobs:
