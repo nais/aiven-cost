@@ -11,7 +11,7 @@ on:
 jobs:
   build:
     name: Build
-    runs-on: ubuntu-lts
+    runs-on: ubuntu-latest
     permissions:
       packages: "write"
       contents: "read"
