@@ -96,6 +96,7 @@ pub struct AivenApiKafkaInvoiceLine {
     pub cost_type: KafkaInvoiceLineCostType,
     pub service_name: String,
     pub project_name: String,
+    pub invoice_id: String,
     pub invoice_state: String,
     #[serde(skip)]
     pub kafka_instance: AivenApiKafka,
@@ -145,18 +146,17 @@ impl AivenApiKafkaInvoiceLine {
     pub async fn populate_with_tags_from_aiven_api(
         &mut self,
         reqwest_client: &reqwest::Client,
-        invoice_type: String,
         cfg: &Cfg,
     ) -> Result<Self> {
         info!(
-            "getting tags for {} - {}",
-            &self.project_name, &self.service_name
+            "{}: getting tags for {} - {}",
+            self.invoice_id, self.project_name, self.service_name
         );
         self.kafka_instance = AivenApiKafka::from_aiven_api(
             reqwest_client,
             cfg,
             &self.project_name,
-            &invoice_type,
+            &self.invoice_state,
             &self.service_name,
         )
         .await?;
@@ -202,6 +202,10 @@ impl AivenApiKafkaInvoiceLine {
             .map(|json| {
                 if let Some(map) = json.as_object_mut() {
                     map.insert(
+                        "invoice_id".to_string(),
+                        serde_json::to_value(invoice_id.to_string())?,
+                    );
+                    map.insert(
                         "invoice_state".to_string(),
                         serde_json::to_value(invoice_state.to_string())?,
                     );
@@ -213,7 +217,7 @@ impl AivenApiKafkaInvoiceLine {
             .collect::<Result<Vec<_>>>()?;
 
         info!(
-            "invoice id {invoice_id} had {} line(s), of which {:?} were kafka related",
+            "invoice id {invoice_id} had {} line(s), of which {:?} were Kafka related",
             &response_invoice_lines.len(),
             &kafka_invoice_lines.len()
         );

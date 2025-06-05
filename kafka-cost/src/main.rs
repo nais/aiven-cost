@@ -153,14 +153,11 @@ async fn extract(
 ) -> Result<(Vec<AivenApiKafkaInvoiceLine>, Vec<AivenApiKafkaInvoiceLine>)> {
     info!("Fetching invoices");
     let mut invoices: Vec<_> = AivenInvoice::from_aiven_api(aiven_client, cfg).await?;
-    let number_of_invoices_from_aiven = invoices.len();
-
-    invoices.retain(|invoice| invoice.period_end < *date_of_latest_paid_invoice);
+    invoices.retain(|invoice| invoice.period_end > *date_of_latest_paid_invoice);
 
     info!(
-        "Out of {} invoice(s) from Aiven, {} have not already been paid in BigQuery",
-        number_of_invoices_from_aiven,
-        invoices.len(),
+        "Found {} invoices not processed in BigQuery",
+        invoices.len()
     );
 
     info!("Getting invoice lines for kakfa");
@@ -171,6 +168,7 @@ async fn extract(
         .await?
         .into_iter()
         .flatten()
+        .filter(|invoice_line| invoice_line.project_name == "leesah-game-prod")
         .collect();
 
     let kafka_tiered_storage_cost_invoice_lines: Vec<_> = kafka_invoice_lines
@@ -183,10 +181,7 @@ async fn extract(
         kafka_invoice_lines
             .iter_mut()
             .filter(|i| i.cost_type == KafkaInvoiceLineCostType::Base)
-            .map(|kafka_instance| {
-                let inv_typ = "should be estimated".to_string();
-                kafka_instance.populate_with_tags_from_aiven_api(aiven_client, inv_typ, cfg)
-            }),
+            .map(|invoice_line| invoice_line.populate_with_tags_from_aiven_api(aiven_client, cfg)),
     )
     .await?
     .into_iter()
@@ -233,8 +228,8 @@ struct TenantEnv {
 }
 
 type TeamName = String;
-type KafkaInstanceName = String;
 struct KafkaInstance {
+    service_name: String,
     base_cost: BigDecimal,
     aggregate_data_usage: DataUsage,
     invoice_state: String,
@@ -316,8 +311,7 @@ fn transform(
     }
 
     // We start by making collection of all tenants>envs>instances>teams, and their usage of Kafka
-    let mut tenant_envs: HashMap<TenantEnv, HashMap<KafkaInstanceName, KafkaInstance>> =
-        HashMap::new();
+    let mut tenant_envs: HashMap<TenantEnv, Vec<KafkaInstance>> = HashMap::new();
     for line in kafka_base_cost_lines {
         // Get existing TenantEnv's HashMap of kafka instances if it exists
         let tenant_key = TenantEnv {
@@ -329,33 +323,31 @@ fn transform(
         let teams = aggregate_topic_usage_by_team(&line.kafka_instance)?;
 
         // Insert data into collector variable
-        kafka_instances.insert(
-            line.service_name.clone(),
-            KafkaInstance {
-                aggregate_data_usage: teams.iter().fold(
-                    DataUsage {
-                        base_size: 0,
-                        tiered_size: 0,
-                    },
-                    |mut acc, (_, du)| {
-                        acc.base_size += du.base_size;
-                        acc.tiered_size += du.tiered_size;
-                        acc
-                    },
-                ),
-                teams,
-                invoice_state: line.invoice_state.clone(),
-                base_cost: line.line_total_local.clone(),
-                year_month: line.timestamp_begin.format("%Y-%m").to_string(),
-                days_in_month: line.timestamp_begin.num_days_in_month(),
-            },
-        );
+        kafka_instances.push(KafkaInstance {
+            service_name: line.service_name.clone(),
+            aggregate_data_usage: teams.iter().fold(
+                DataUsage {
+                    base_size: 0,
+                    tiered_size: 0,
+                },
+                |mut acc, (_, du)| {
+                    acc.base_size += du.base_size;
+                    acc.tiered_size += du.tiered_size;
+                    acc
+                },
+            ),
+            teams,
+            invoice_state: line.invoice_state.clone(),
+            base_cost: line.line_total_local.clone(),
+            year_month: line.timestamp_begin.format("%Y-%m").to_string(),
+            days_in_month: line.timestamp_begin.num_days_in_month(),
+        });
     }
 
     // With the collection we can calcuate each teams usage of Kafka by their topics combined byte size
     let mut bigquery_data_rows = Vec::new();
     for (tenant_env, kafka_instances) in &tenant_envs {
-        for (kafka_name, instance) in kafka_instances {
+        for instance in kafka_instances {
             let Some(num_teams) = BigDecimal::from_usize(instance.teams.len()) else {
                 bail!("Unable to convert to BigDecimal: {}", instance.teams.len())
             };
@@ -364,7 +356,7 @@ fn transform(
                 instance.teams.len(),
                 tenant_env.tenant,
                 tenant_env.environment,
-                kafka_name
+                instance.service_name
             );
             for (team_name, team_data_usage) in &instance.teams {
                 let half_base_cost = instance.base_cost.clone() / 2;
@@ -381,7 +373,7 @@ fn transform(
                     team: team_name.clone(),
                     service: String::from("kafka-base"),
                     status: instance.invoice_state.to_string(),
-                    service_name: kafka_name.clone(),
+                    service_name: instance.service_name.clone(),
                     tenant: tenant_env.tenant.clone(),
                     cost: team_divided_base_cost + storage_weighted_storage_cost,
                     date: instance.year_month.clone(),
@@ -407,7 +399,11 @@ fn transform(
         }];
 
         let service_name = &line.service_name;
-        let instance = &instances[service_name];
+        let date_as_string = line.timestamp_begin.format("%Y-%m").to_string();
+        let instance = &instances
+            .iter()
+            .find(|i| i.service_name == *service_name && i.year_month == date_as_string)
+            .ok_or_else(|| anyhow::anyhow!("No instance found for service: {}", service_name))?;
 
         let total_tiered_storage = instance.aggregate_data_usage.tiered_size;
         for (name, usage) in &instance.teams {
@@ -424,7 +420,7 @@ fn transform(
                 service_name: service_name.to_owned(),
                 tenant: tenant.to_owned(),
                 cost: &line.line_total_local * (usage.tiered_size / total_tiered_storage),
-                date: line.timestamp_begin.format("%Y-%m").to_string(),
+                date: date_as_string.clone(),
                 number_of_days: line.timestamp_begin.num_days_in_month(),
             });
         }

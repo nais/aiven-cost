@@ -46,7 +46,7 @@ impl AivenApiKafka {
         reqwest_client: &reqwest::Client,
         cfg: &Cfg,
         project_name: &str,
-        invoice_type: &str,
+        invoice_state: &str,
         service_name: &str,
     ) -> Result<Self> {
         let result = Self::from_json_obj(
@@ -54,7 +54,7 @@ impl AivenApiKafka {
                 .await?
                 .unwrap_or_else(|| serde_json::json!({"tenant": "", "environment": ""})),
             project_name,
-            invoice_type,
+            invoice_state,
             service_name,
         )?;
 
