@@ -42,9 +42,7 @@
             "${builtins.toString self.revCount}-${self.shortRev}"
           else
             "gitDirty";
-
         tag = "${kafka-cost.version}-${dockerTag}";
-
         docker = pkgs.dockerTools.buildImage {
           inherit (kafka-cost) name;
           inherit tag;
@@ -71,7 +69,7 @@
                   spec = {
                     containers = [
                       {
-                        image = "europe-north1-docker.pkg.dev/nais-io/nais/images/kafka-cost=${tag}";
+                        image = "europe-north1-docker.pkg.dev/nais-io/nais/images/kafka-cost:${tag}";
                         imagePullPolicy = "Always";
                         name = kafka-cost.name;
                         env = [
