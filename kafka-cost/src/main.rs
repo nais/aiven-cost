@@ -148,25 +148,23 @@ async fn extract(
     date_of_latest_paid_invoice: &DateTime<Utc>,
 ) -> Result<(Vec<AivenApiKafkaInvoiceLine>, Vec<AivenApiKafkaInvoiceLine>)> {
     info!("Fetching invoices");
-    let invoices: Vec<_> = AivenInvoice::from_aiven_api(aiven_client, cfg)
-        .await?
+    let mut invoices: Vec<_> = AivenInvoice::from_aiven_api(aiven_client, cfg).await?;
+    let number_of_invoices_from_aiven = invoices.len();
+
+    invoices = invoices
         .into_iter()
         .filter(|invoice| invoice.period_end < *date_of_latest_paid_invoice)
         .collect();
 
-    let without_already_paid_invoices: Vec<_> = invoices
-        .iter()
-        .filter(|invoice| invoice.period_end < *date_of_latest_paid_invoice)
-        .collect();
     info!(
         "Out of {} invoice(s) from Aiven, {} have not already been paid in BigQuery",
+        number_of_invoices_from_aiven,
         invoices.len(),
-        without_already_paid_invoices.len(),
     );
 
     info!("Getting invoice lines for kakfa");
     let mut kafka_invoice_lines: Vec<AivenApiKafkaInvoiceLine> =
-        try_join_all(without_already_paid_invoices.iter().map(|invoice| {
+        try_join_all(invoices.iter().map(|invoice| {
             AivenApiKafkaInvoiceLine::from_aiven_api(aiven_client, cfg, &invoice.id, &invoice.state)
         }))
         .await?
