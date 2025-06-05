@@ -5,6 +5,7 @@ on:
       - "flake.*"
       - "**.nix"
       - "kafka-cost/**"
+      - .github/workflows/kafka-cost.yaml
 
 jobs:
   build:
