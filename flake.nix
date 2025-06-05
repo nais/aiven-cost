@@ -18,7 +18,7 @@
   };
 
   outputs =
-    inputs:
+    {self, ...}@inputs:
     inputs.flake-utils.lib.eachDefaultSystem (
       system:
       let
@@ -37,16 +37,28 @@
         cargoArtifacts = craneLib.buildDepsOnly commonArgs;
 
         kafka-cost = craneLib.buildPackage (commonArgs // { inherit cargoArtifacts; });
+        dockerTag = if lib.hasAttr "rev" self then
+          "${builtins.toString self.revCount}-${self.shortRev}"
+        else
+          "gitDirty";
 
         docker = pkgs.dockerTools.buildImage {
-            name = "kafka-cost";
-            tag = "v1";
+            inherit (kafka-cost) name;
+            tag = "${kafka-cost.version}-${dockerTag}";
             config = {
               Entrypoint = [ (lib.getExe kafka-cost) ];
             };
           };
+          spec = pkgs.writeText "spec.yaml" (builtins.concatStringsSep ''
+
+            ---
+          '' (builtins.map builtins.toJSON [
+            {
+              # TODO: Write naisjob, just w/nix =D
+            }
+          ]));
       in
-      {
+      rec {
         devShells.default = pkgs.mkShell {
           packages = with pkgs; [
             go
@@ -61,6 +73,7 @@
           ];
           inputsFrom = [ kafka-cost ];
         };
+        checks = {inherit (packages) default docker spec;};
         formatter = inputs.treefmt-nix.lib.mkWrapper pkgs {
           programs.nixfmt.enable = true;
           programs.gofumpt.enable = true;
@@ -68,6 +81,7 @@
         };
         packages.default = kafka-cost;
         packages.docker = docker;
+        packages.spec = spec;
       }
     );
 }
