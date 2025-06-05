@@ -1,6 +1,8 @@
 name: Build, push and deploy currency
 on:
   push:
+    paths-ignore:
+      - "kafka-cost/**"
     branches:
       - main
 

@@ -1,6 +1,8 @@
 name: Build, push and deploy aiven-cost
 on:
   push:
+    paths-ignore:
+      - "kafka-cost/**"
     branches:
       - main
 

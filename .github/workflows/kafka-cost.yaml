@@ -2,16 +2,19 @@ name: build
 on:
   push:
     paths-ignore:
-      - "**/*.md"
-      - "**/*.go"
+      - "**.md"
+      - "**.go"
       - "**/go.*"
-      - "**/*.Dockerfile"
+      - "**.Dockerfile"
       - ".env*"
+    paths:
+      - "flake.*"
+      - "kafka-cost/**"
 
 jobs:
   build:
-    name: Build
     runs-on: ubuntu-latest
+    name: Build kafka-cost
     permissions:
       packages: "write"
       contents: "read"
@@ -28,7 +31,8 @@ jobs:
     outputs:
       image: ${{ steps.nix-build.outputs.image }}
 
-  deploy_aiven-cost:
+  deploy_kafka-cost:
+    name: Deploy kafka-cost
     if: github.ref == 'refs/heads/main'
     runs-on: [fasit-deploy]
     needs: [build]
@@ -36,8 +40,6 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - name: Checkout aiven-cost
-        uses: actions/checkout@v4
       - name: Download spec
         uses: actions/download-artifact@v4
         with:
