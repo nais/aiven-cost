@@ -65,8 +65,8 @@
               spec = {
                 template = {
                   metadata = {
-                    labels.app = kafka-cost;
-                    name = kafka-cost;
+                    labels.app = kafka-cost.name;
+                    name = kafka-cost.name;
                   };
                   spec = {
                     containers = [
@@ -81,7 +81,7 @@
                           }
                         ];
                         envFrom = [
-                          { secretRef.name = kafka-cost; }
+                          { secretRef.name = kafka-cost.name; }
                         ];
                         resources = {
                           requests = {
