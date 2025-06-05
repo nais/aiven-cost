@@ -49,14 +49,66 @@
               Entrypoint = [ (lib.getExe kafka-cost) ];
             };
           };
-          spec = pkgs.writeText "spec.yaml" (builtins.concatStringsSep ''
+          spec = pkgs.writeText "spec.yaml" ''
+          ---
+          apiVersion: batch/v1
+          kind: CronJob
+          metadata:
+            name: aiven-cost
+            namespace: nais-system
+          spec:
+            concurrencyPolicy: Forbid
+            failedJobsHistoryLimit: 1
+            jobTemplate:
+              spec:
+                template:
+                  metadata:
+                    labels:
+                      app: aiven-cost
+                    name: aiven-cost
+                  spec:
+                    containers:
+                    - image: ${docker.tag}
+                      imagePullPolicy: Always
+                      name: aiven-cost
+                      env:
+                        - name: AIVEN_BILLING_GROUP_ID
+                          value: 7d14362d-1e2a-4864-b408-1cc631bc4fab
+                      envFrom:
+                        - secretRef:
+                            name: aiven-cost
+                      resources:
+                        requests:
+                          cpu: 250m
+                          memory: 512Mi
+                          ephemeral-storage: 1Gi
+                        limits:
+                          cpu: 250m
+                          memory: 512Mi
+                          ephemeral-storage: 1Gi
+                      securityContext:
+                        allowPrivilegeEscalation: false
+                        capabilities:
+                          drop:
+                          - ALL
+                        readOnlyRootFilesystem: false
+                        runAsNonRoot: true
+                        runAsUser: 65532
+                        seccompProfile:
+                          type: RuntimeDefault
+                      terminationMessagePath: /dev/termination-log
+                      terminationMessagePolicy: File
+                    dnsPolicy: ClusterFirst
+                    restartPolicy: OnFailure
+                    schedulerName: default-scheduler
+                    serviceAccount: aiven-cost
+                    serviceAccountName: aiven-cost
+                    terminationGracePeriodSeconds: 30
+            schedule: 30 5 * * *
+            successfulJobsHistoryLimit: 1
+            suspend: false
+            ---'';
 
-            ---
-          '' (builtins.map builtins.toJSON [
-            {
-              # TODO: Write naisjob, just w/nix =D
-            }
-          ]));
       in
       rec {
         devShells.default = pkgs.mkShell {
