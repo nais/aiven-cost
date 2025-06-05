@@ -77,20 +77,18 @@ async fn main() -> Result<()> {
             .collect();
 
     info!("Next we are finding the latest paid invoice line in BigQuery");
+    let latest_date_string =
+        paid_invoices
+            .iter()
+            .fold("2025-01", |current_oldest, current_invoice| {
+                let current_invoice_date = &current_invoice.date;
+                if **current_invoice_date > *current_oldest {
+                    return current_invoice_date;
+                }
+                current_oldest
+            });
     let date_of_latest_paid_invoice: DateTime<Utc> = DateTime::from_naive_utc_and_offset(
-        NaiveDate::parse_from_str(
-            paid_invoices
-                .iter()
-                .fold("1980-01", |current_oldest, current_invoice| {
-                    let current_invoice_date = &current_invoice.date;
-                    if **current_invoice_date > *current_oldest {
-                        return current_invoice_date;
-                    }
-                    current_oldest
-                }),
-            "%Y-%m",
-        )?
-        .into(),
+        NaiveDate::parse_from_str(&format!("{}-01", latest_date_string), "%Y-%m-%d")?.into(),
         Utc,
     );
     info!(
