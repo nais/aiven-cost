@@ -1,4 +1,4 @@
-name: build
+name: Build and deploy kafka-cost
 on:
   push:
     paths:
