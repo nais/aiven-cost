@@ -155,10 +155,7 @@ async fn extract(
     let mut invoices: Vec<_> = AivenInvoice::from_aiven_api(aiven_client, cfg).await?;
     let number_of_invoices_from_aiven = invoices.len();
 
-    invoices = invoices
-        .into_iter()
-        .filter(|invoice| invoice.period_end < *date_of_latest_paid_invoice)
-        .collect();
+    invoices.retain(|invoice| invoice.period_end < *date_of_latest_paid_invoice);
 
     info!(
         "Out of {} invoice(s) from Aiven, {} have not already been paid in BigQuery",
