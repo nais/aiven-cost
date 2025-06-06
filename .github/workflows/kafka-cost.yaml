@@ -39,7 +39,7 @@ jobs:
         id: analyze
         shell: bash
         run: |
-          image_name=$(nix eval .#image.drvAttrs.imageName | tr -d '"')
+          image_name=$(nix eval .#docker.drvAttrs.imageName | tr -d '"')
           image_address_prefix="europe-north1-docker.pkg.dev/nais-io/nais/images/"
           if [[ $image_name == "$image_address_prefix"* ]]; then
             # Avoid duplication if team already set it,
@@ -48,7 +48,7 @@ jobs:
           fi
           echo "image=${image_name}" >> $GITHUB_OUTPUT
 
-          image_tag=$(nix eval .#image.drvAttrs.imageTag | tr -d '"')
+          image_tag=$(nix eval .#docker.drvAttrs.imageTag | tr -d '"')
 
           echo "tag=${image_tag}" >> $GITHUB_OUTPUT
 
