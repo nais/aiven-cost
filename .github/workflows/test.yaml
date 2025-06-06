@@ -1,0 +1,25 @@
+name: Test av innlogging
+on:
+  push:
+    branches:
+      - main
+
+env:
+  REGISTRY: europe-north1-docker.pkg.dev/nais-io/nais/images
+
+jobs:
+  build_and_push:
+    permissions:
+      contents: read
+      id-token: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - id: auth
+        name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.NAIS_IO_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: gh-aiven-cost@nais-io.iam.gserviceaccount.com
+          token_format: access_token
