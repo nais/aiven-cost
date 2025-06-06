@@ -168,7 +168,6 @@ async fn extract(
         .await?
         .into_iter()
         .flatten()
-        .filter(|invoice_line| invoice_line.project_name == "leesah-game-prod")
         .collect();
 
     let kafka_tiered_storage_cost_invoice_lines: Vec<_> = kafka_invoice_lines
