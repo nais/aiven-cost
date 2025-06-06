@@ -16,6 +16,11 @@ jobs:
       contents: "read"
       id-token: "write"
     steps:
+      - name: Get the code from git repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       # *** Goggle clou id: build-images d authentication
       # The "identity provider" here is a _workload identity_
       - id: "auth"
@@ -27,11 +32,6 @@ jobs:
           token_format: access_token
         env:
           REGISTRY: europe-north1-docker.pkg.dev/nais-io/nais/images
-
-      - name: Get the code from git repo
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       # *** Install nix on the action runner
       - name: Install Nix
