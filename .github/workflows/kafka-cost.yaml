@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     name: Build kafka-cost
     permissions:
-      packages: "write"
+      # packages: "write"
       contents: "read"
       id-token: "write"
     steps:
