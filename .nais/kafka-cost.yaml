@@ -24,7 +24,7 @@ spec:
                   value: 7d14362d-1e2a-4864-b408-1cc631bc4fab
               envFrom:
                 - secretRef:
-                    name: kafka-cost
+                    name: aiven-cost
               resources:
                 requests:
                   cpu: 250m
