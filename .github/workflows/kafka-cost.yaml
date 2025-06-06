@@ -93,7 +93,7 @@ jobs:
       - name: Build Image
         shell: bash
         run: |
-          LOADED_IMAGE=$(nix build .#image --out-link result-image && docker load < result-image | awk -F ': ' '{print $2}')
+          LOADED_IMAGE=$(nix build .#docker --out-link result-image && docker load < result-image | awk -F ': ' '{print $2}')
 
           docker tag $LOADED_IMAGE ${{ steps.analyze.outputs.image_address }}:${{ steps.analyze.outputs.tag }}
 
