@@ -2,6 +2,8 @@ name: Build, push and deploy kafka-cost
 on:
   push:
     paths:
+      - ".github/workflows/test.yaml"
+      - ".nais/kafka-cost.yaml"
       - "kafka-cost/**"
     branches:
       - main
