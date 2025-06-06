@@ -16,7 +16,147 @@ jobs:
       contents: "read"
       id-token: "write"
     steps:
-      - uses: actions/checkout@v4
+      - name: Get the code from git repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # *** Install nix on the action runner
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            extra-experimental-features = nix-command flakes pipe-operators
+            accept-flake-config = true
+
+      # *** Flake health check
+      - name: Check Nix flake which for us builds all package outputs
+        run: nix flake check
+        shell: bash
+
+      # *** Flake analysis
+      - name: Analyze
+        id: analyze
+        shell: bash
+        run: |
+          image_name=$(nix eval .#image.drvAttrs.imageName | tr -d '"')
+          image_address_prefix="europe-north1-docker.pkg.dev/nais-io/nais/images/"
+          if [[ $image_name == "$image_address_prefix"* ]]; then
+            # Avoid duplication if team already set it,
+            #  say for simplifying their GH workflow wrt. nais's `spec.image`
+            image_name=${image_name#"$image_address_prefix"}
+          fi
+          echo "image=${image_name}" >> $GITHUB_OUTPUT
+
+          image_tag=$(nix eval .#image.drvAttrs.imageTag | tr -d '"')
+
+          echo "tag=${image_tag}" >> $GITHUB_OUTPUT
+
+          SBOM=$(nix flake show --json | jq -r '.packages."x86_64-linux" | keys[]' | grep -q sbom && echo true || echo false)
+          SPEC=$(nix flake show --json | jq -r '.packages."x86_64-linux" | keys[]' | grep -q spec && echo true || echo false)
+
+          echo "sbom=${SBOM}" >> $GITHUB_OUTPUT
+          echo "spec=${SPEC}" >> $GITHUB_OUTPUT
+          echo "image_address=${image_address_prefix}${image_name}" >> $GITHUB_OUTPUT
+
+      # *** Build SBOM, should the package exist
+      - name: Build SBOM
+        if: ${{ steps.analyze.outputs.sbom == 'true' }}
+        id: build-sbom
+        shell: bash
+        run: |
+          nix build .#sbom --out-link sbom.json
+          echo "✅ Built SBOM, $(wc -l sbom.json | awk '{print $1}') lines" >> $GITHUB_STEP_SUMMARY
+          echo "sbom=sbom.json" >> $GITHUB_OUTPUT
+
+      # *** Build app spec, should the package exist
+      - name: Build spec
+        if: ${{ steps.analyze.outputs.spec == 'true' }}
+        id: build-spec
+        shell: bash
+        run: |
+          nix build .#spec --out-link spec.yaml
+          echo "✅ Built Nais spec as spec.yaml, $(wc -c spec.yaml | awk '{print $1}') bytes" >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload spec
+        if: ${{ steps.analyze.outputs.spec == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          # what to upload
+          path: spec.yaml
+
+          # what to call the upload
+          name: spec.yaml
+
+      # *** Build and load images
+      # Build the images as a tarball, load the image and retag it with "fully qualified OCI reference name"
+      - name: Build Images
+        shell: bash
+        run: |
+          LOADED_IMAGE=$(nix build .#image --out-link result-image && docker load < result-image | awk -F ': ' '{print $2}')
+
+          docker tag $LOADED_IMAGE ${{ steps.analyze.outputs.image_address }}:${{ steps.analyze.outputs.tag }}
+
+          # TODO: There should be a little for loop over the tags from the extra tags input.
+          echo "✅ Built image: ${{ steps.analyze.outputs.image_address }}" >> $GITHUB_STEP_SUMMARY
+
+      # *** Goggle clou id: build-images d authentication
+      # The "identity provider" here is a _workload identity_
+      - id: "auth"
+        name: "Authenticate to Google Cloud"
+        uses: "google-github-actions/auth@v2"
+        with:
+          workload_identity_provider: ${{ secrets.NAIS_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: gh-aiven-cost@nais-io.iam.gserviceaccount.com
+          token_format: access_token
+
+      - name: "Handle auth failure"
+        if: ${{ failure() && steps.auth.outcome == 'failure' }}
+        shell: bash
+        run: |
+          cat <<EOF
+          ::error ::Failed to authenticate to Google Cloud.
+          EOF
+
+      # *** Login with credentials from Auth
+      # Note that this is conditional on inputs.push, which by default is true. you want something else?
+      # Try setting it to false
+      - name: "Login to registry"
+        id: login-to-registry
+        if: ${{ inputs.push == 'true' }}
+        uses: docker/login-action@343f7c4344506bcbf9b4de18042ae17996df046d # ratchet:docker/login-action@v2
+        with:
+          registry: "${{ steps.setup.outputs.gar_registry_url }}"
+          username: "oauth2accesstoken"
+          password: "${{ steps.auth.outputs.access_token }}"
+      - name: Push image to registry
+        id: push
+        shell: bash
+        run: |
+          docker images
+          docker push ${{ steps.analyze.outputs.image_address }}:${{ steps.analyze.outputs.tag }}
+          docker tag ${{ steps.analyze.outputs.image_address }}:${{ steps.analyze.outputs.tag }} ${{ steps.analyze.outputs.image_address }}:latest
+
+          docker push ${{ steps.analyze.outputs.image_address }}:latest  | tee push_output.txt
+          image_digest=$(grep "digest:" push_output.txt | awk '{ print $3 }')
+          echo "image_digest=${image_digest}" >> $GITHUB_OUTPUT
+
+      # *** Run cosign et al.
+      - name: "Generate SBOM, attest and sign image"
+        if: "${{ inputs.push == 'true' && steps.analyze.outputs.sbom == 'true' }}"
+        uses: nais/attest-sign@v1.3.1
+        with:
+          image_ref: ${{ steps.analyze.outputs.image_address }}@${{ steps.push.outputs.image_digest }}
+          sbom: ${{ steps.build-sbom.outputs.sbom }}
+
+      # *** These outputs are mostly used by nais/deploy-aciton
+      - name: Set outputs
+        shell: bash
+        id: set-outputs
+        run: |-
+          echo "image=${{ steps.analyze.outputs.image_address }}:${{ steps.analyze.outputs.tag }}" >> $GITHUB_OUTPUT
+          echo "sbom=${{ steps.build-sbom.outputs.sbom }}" >> $GITHUB_OUTPUT
+
       - uses: nais/nais-nix-action@main
         name: nix-build
         id: nix-build
