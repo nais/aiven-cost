@@ -34,12 +34,16 @@ jobs:
         run: nix flake check
         shell: bash
 
+      - name: Install jq
+        run: nix profile install nixpkgs#jq
+        shell: bash
+
       # *** Flake analysis
       - name: Analyze
         id: analyze
         shell: bash
         run: |
-          image_name=$(nix eval .#docker.drvAttrs.imageName | tr -d '"')
+          image_name=$(nix eval --json .#docker.drvAttrs.imageName | jq -r)
           image_address_prefix="europe-north1-docker.pkg.dev/nais-io/nais/images/"
           if [[ $image_name == "$image_address_prefix"* ]]; then
             # Avoid duplication if team already set it,
@@ -48,7 +52,7 @@ jobs:
           fi
           echo "image=${image_name}" >> $GITHUB_OUTPUT
 
-          image_tag=$(nix eval .#docker.drvAttrs.imageTag | tr -d '"')
+          image_tag=$(nix eval --json .#docker.drvAttrs.imageTag | jq -r)
 
           echo "tag=${image_tag}" >> $GITHUB_OUTPUT
 
@@ -109,6 +113,8 @@ jobs:
           workload_identity_provider: ${{ secrets.NAIS_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: gh-aiven-cost@nais-io.iam.gserviceaccount.com
           token_format: access_token
+        env:
+          REGISTRY: europe-north1-docker.pkg.dev/nais-io/nais/images
 
       - name: "Handle auth failure"
         if: ${{ failure() && steps.auth.outcome == 'failure' }}
