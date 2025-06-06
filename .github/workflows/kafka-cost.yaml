@@ -90,7 +90,7 @@ jobs:
 
       # *** Build and load images
       # Build the images as a tarball, load the image and retag it with "fully qualified OCI reference name"
-      - name: Build Images
+      - name: Build Image
         shell: bash
         run: |
           LOADED_IMAGE=$(nix build .#image --out-link result-image && docker load < result-image | awk -F ': ' '{print $2}')
@@ -126,7 +126,7 @@ jobs:
         if: ${{ inputs.push == 'true' }}
         uses: docker/login-action@343f7c4344506bcbf9b4de18042ae17996df046d # ratchet:docker/login-action@v2
         with:
-          registry: "${{ steps.setup.outputs.gar_registry_url }}"
+          registry: europe-north1-docker.pkg.dev/nais-io/nais
           username: "oauth2accesstoken"
           password: "${{ steps.auth.outputs.access_token }}"
       - name: Push image to registry
