@@ -46,6 +46,7 @@ fn client() -> Result<reqwest::Client> {
     reqwest::Client::builder()
         .https_only(true)
         .user_agent(USER_AGENT)
+//        .pool_max_idle_per_host(max)
         .build()
         .map_err(color_eyre::eyre::Error::msg)
 }

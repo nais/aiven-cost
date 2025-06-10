@@ -1119,6 +1119,7 @@ dependencies = [
  "futures",
  "futures-util",
  "gcloud-bigquery",
+ "rand",
  "reqwest",
  "serde",
  "serde_json",

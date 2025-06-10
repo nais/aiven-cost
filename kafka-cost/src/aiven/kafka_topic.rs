@@ -1,9 +1,11 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, time::SystemTimeError};
 
+use bigdecimal::ToPrimitive;
+use chrono::{DateTime, TimeZone};
 use color_eyre::eyre::{Result, bail};
 use futures_util::future::try_join_all;
 use serde::Deserialize;
-use tracing::info;
+use tracing::{info, trace};
 
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(rename_all = "UPPERCASE")]
@@ -78,18 +80,35 @@ impl AivenApiKafkaTopic {
         project_name: &str,
         kafka_name: &str,
     ) -> Result<Self> {
+         let c =    reqwest::Client::builder()
+        .https_only(true)
+        .user_agent("very nais")
+        .build()
+        .map_err(color_eyre::eyre::Error::msg)?;
+
+        use rand::prelude::*;
+        use tokio::time::Duration;
+        let mut rng = rand::rng();
+
+        let some_millis: u16 = rng.random();
+        let dur = Duration::from_millis(some_millis.to_u64().unwrap());
+        let _ = tokio::time::sleep(dur);
+        let t = chrono::offset::Local::now();
         let url = format!(
             "https://api.aiven.io/v1/project/{project_name}/service/{kafka_name}/topic/{}",
             self.name
         );
-        let response = match reqwest_client
+        let response = match c
             .get(&url)
             .bearer_auth(&cfg.aiven_api_token)
             .send()
             .await
         {
             Ok(r) => r,
-            Err(e) => bail!("HTTP request failed with: {e}"),
+            Err(e) => {
+                let delta_t = chrono::offset::Local::now() - t;
+                bail!("HTTP request failed with: {:?}, {}", e, delta_t)
+            }
         };
         let response_status = &response.status();
         let Ok(mut response_body) =
@@ -105,18 +124,21 @@ impl AivenApiKafkaTopic {
         let topic_data: AivenApiKafkaTopicSpecificData =
             match serde_json::from_value(topic_json.clone()) {
                 Ok(t) => t,
-                Err(e) => bail!(
-                    "Unable to parse topic's partitions json from aiven: {}: {:?}",
-                    e,
-                    &topic_json
-                ),
+                Err(e) => {
+                    bail!(
+                        "Unable to parse topic's partitions json from aiven: {}: {:?}",
+                        e,
+                        &topic_json
+                    )
+                }
             };
         self.partitions = topic_data.partitions;
         assert!(
             self.tags.iter().all(|(k, v)| &topic_data.tags[k] == v) && self.name == topic_data.name,
             "topic data doesn't match..."
         );
-
+        let delta_t = chrono::offset::Local::now() - t;
+        trace!("dt {}", delta_t);
         Ok(self.clone())
     }
 
@@ -155,6 +177,10 @@ impl AivenApiKafkaTopic {
             "Populating {} topics with partitions for {project_name} - {kafka_name}",
             response_topics.len()
         );
+
+        use futures::stream::{self, StreamExt, TryStreamExt};
+
+        // 1274 threads
         try_join_all(
             Self::from_json_list(response_topics)?
                 .iter_mut()
