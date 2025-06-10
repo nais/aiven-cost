@@ -34,7 +34,7 @@ pub struct AivenInvoice {
     #[serde(rename(deserialize = "invoice_number"))]
     pub id: String,
     pub state: AivenInvoiceState,
-    pub period_end: DateTime<Utc>,
+    pub period_begin: DateTime<Utc>,
 }
 
 impl AivenInvoice {

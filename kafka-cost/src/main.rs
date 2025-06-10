@@ -153,7 +153,7 @@ async fn extract(
 ) -> Result<(Vec<AivenApiKafkaInvoiceLine>, Vec<AivenApiKafkaInvoiceLine>)> {
     info!("Fetching invoices");
     let mut invoices: Vec<_> = AivenInvoice::from_aiven_api(aiven_client, cfg).await?;
-    invoices.retain(|invoice| invoice.period_end > *date_of_latest_paid_invoice);
+    invoices.retain(|invoice| invoice.period_begin > *date_of_latest_paid_invoice);
 
     info!(
         "Found {} invoices not processed in BigQuery",
