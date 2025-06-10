@@ -1,8 +1,9 @@
 use std::collections::HashMap;
 
 use color_eyre::eyre::{Result, bail};
+use futures::stream::{self, StreamExt};
 use serde::Deserialize;
-use tracing::{info, trace};
+use tracing::info;
 
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(rename_all = "UPPERCASE")]
@@ -45,7 +46,6 @@ where
         .map(|obj| (obj["key"].clone(), obj["value"].clone())) // Trust in Aiven never to refactor this structure...
         .collect();
     Ok(result)
-    // todo!()
 }
 
 #[derive(Debug, Deserialize)]
@@ -157,8 +157,6 @@ impl AivenApiKafkaTopic {
             "Populating {} topics with partitions for {project_name} - {kafka_name}",
             response_topics.len()
         );
-
-        use futures::stream::{self, StreamExt};
 
         let mut topics = Self::from_json_list(response_topics)?;
         let topics_with_partitions = stream::iter(topics.iter_mut())

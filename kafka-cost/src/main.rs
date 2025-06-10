@@ -152,11 +152,18 @@ async fn get_rows_in_bigquery_table(
         dataset_id: cfg.bigquery_dataset.clone(),
         table_id: cfg.bigquery_table.clone(),
     };
-    let Ok(mut reader) = bigquery_client
+    let mut reader = match bigquery_client
         .read_table::<ReadRow>(&table_reference, None)
         .await
-    else {
-        return Ok(Vec::new());
+    {
+        Ok(r) => r,
+        Err(e) => match e {
+            gcloud_bigquery::storage::Error::GRPC(_) => bail!("grpc error {e:?}"),
+            error => {
+                warn!("gcloud non-connection error: {error:?}");
+                return Ok(Vec::new());
+            }
+        },
     };
     let mut rows = Vec::new();
     while let Some(row) = reader.next().await? {
