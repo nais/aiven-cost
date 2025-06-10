@@ -77,12 +77,7 @@ impl AivenApiKafkaTopic {
         project_name: &str,
         kafka_name: &str,
     ) -> Result<Self> {
-        use tokio::time::Duration;
-        let dur = Duration::from_millis(50);
 
-        let _ = tokio::time::sleep(dur);
-
-        let t = chrono::offset::Local::now();
         let url = format!(
             "https://api.aiven.io/v1/project/{project_name}/service/{kafka_name}/topic/{}",
             self.name
@@ -90,8 +85,7 @@ impl AivenApiKafkaTopic {
         let response = match reqwest_client.get(&url).bearer_auth(&cfg.aiven_api_token).send().await {
             Ok(r) => r,
             Err(e) => {
-                let delta_t = chrono::offset::Local::now() - t;
-                bail!("HTTP request failed with: {:?}, {}", e, delta_t)
+                bail!("HTTP request failed with: {:?}", e)
             }
         };
         let response_status = &response.status();
@@ -121,8 +115,6 @@ impl AivenApiKafkaTopic {
             self.tags.iter().all(|(k, v)| &topic_data.tags[k] == v) && self.name == topic_data.name,
             "topic data doesn't match..."
         );
-        let delta_t = chrono::offset::Local::now() - t;
-        trace!("dt {}", delta_t);
         Ok(self.clone())
     }
 
