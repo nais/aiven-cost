@@ -84,8 +84,7 @@ async fn main() -> Result<()> {
     let bigquery_client = Client::new(config).await?;
     let paid_invoices: Vec<BigQueryTableRowData> =
         get_rows_in_bigquery_table(&cfg, &bigquery_client)
-            .await
-            .unwrap_or_else(|_| Vec::new())
+            .await?
             .into_iter()
             .filter(|r| r.status == "paid")
             .collect();
@@ -130,9 +129,13 @@ async fn get_rows_in_bigquery_table(
         dataset_id: cfg.bigquery_dataset.clone(),
         table_id: cfg.bigquery_table.clone(),
     };
-    let mut reader = bigquery_client
+    let mut reader = match bigquery_client
         .read_table::<ReadRow>(&table_reference, None)
-        .await?;
+        .await
+    {
+        Ok(r) => r,
+        Err(_) => return Ok(Vec::new()),
+    };
     let mut rows = Vec::new();
     while let Some(row) = reader.next().await? {
         let project_name = row.column::<String>(0)?;
