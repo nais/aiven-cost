@@ -28,7 +28,7 @@
                     }
                   ];
                   envFrom = [
-                    { secretRef = { inherit name; }; }
+                    { secretRef = "aiven-cost"; }
                   ];
                   resources = {
                     requests = {

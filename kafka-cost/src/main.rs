@@ -83,7 +83,8 @@ async fn main() -> Result<()> {
     let bigquery_client = Client::new(config).await?;
     let paid_invoices: Vec<BigQueryTableRowData> =
         get_rows_in_bigquery_table(&cfg, &bigquery_client)
-            .await?
+            .await
+            .unwrap_or_else(|_| Vec::new())
             .into_iter()
             .filter(|r| r.status == "paid")
             .collect();
