@@ -22,6 +22,8 @@ spec:
               env:
                 - name: AIVEN_BILLING_GROUP_ID
                   value: 7d14362d-1e2a-4864-b408-1cc631bc4fab
+                - name: RUST_LOG
+                  value: info
               envFrom:
                 - secretRef:
                     name: aiven-cost

@@ -93,14 +93,12 @@ jobs:
         run: |
           nix build .#spec --out-link spec.yaml
           echo "✅ Built Nais spec as spec.yaml, $(wc -c spec.yaml | awk '{print $1}') bytes" >> $GITHUB_STEP_SUMMARY
-
       - name: Upload spec
         if: ${{ steps.analyze.outputs.spec == 'true' }}
         uses: actions/upload-artifact@v4
         with:
           # what to upload
           path: spec.yaml
-
           # what to call the upload
           name: spec.yaml
 
