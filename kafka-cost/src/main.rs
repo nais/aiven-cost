@@ -1,10 +1,9 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, io::IsTerminal};
 
 use anyhow::{Result, bail};
 use bigdecimal::{BigDecimal, FromPrimitive, Zero};
 use chrono::{DateTime, Datelike, NaiveDate, Utc};
 use futures_util::future::try_join_all;
-
 use gcloud_bigquery::{
     client::{Client, ClientConfig},
     http::{
@@ -15,12 +14,28 @@ use gcloud_bigquery::{
     },
     storage::row::Row as ReadRow,
 };
-
 use serde::Serialize;
 use tracing::info;
+use tracing_subscriber::{
+    Registry, prelude::__tracing_subscriber_SubscriberExt, util::SubscriberInitExt,
+};
+
+mod aiven;
+use aiven::{AivenApiKafka, AivenApiKafkaInvoiceLine, AivenInvoice, KafkaInvoiceLineCostType};
 
 pub fn init_tracing_subscriber() -> Result<()> {
-    tracing_subscriber::fmt().init();
+    use tracing_subscriber::fmt as layer_fmt;
+
+    let (plain_log_format, json_log_format) = match std::io::stdout().is_terminal() {
+        true => (Some(layer_fmt::layer().compact()), None),
+        false => (None, Some(layer_fmt::layer().json().flatten_event(true))),
+    };
+
+    Registry::default()
+        .with(plain_log_format)
+        .with(json_log_format)
+        .try_init()?;
+
     Ok(())
 }
 
@@ -56,9 +71,6 @@ impl Cfg {
         }
     }
 }
-
-mod aiven;
-use aiven::{AivenApiKafka, AivenApiKafkaInvoiceLine, AivenInvoice, KafkaInvoiceLineCostType};
 
 #[tokio::main]
 async fn main() -> Result<()> {
