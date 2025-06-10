@@ -80,30 +80,17 @@ impl AivenApiKafkaTopic {
         project_name: &str,
         kafka_name: &str,
     ) -> Result<Self> {
-         let c =    reqwest::Client::builder()
-        .https_only(true)
-        .user_agent("very nais")
-        .build()
-        .map_err(color_eyre::eyre::Error::msg)?;
-
-        use rand::prelude::*;
         use tokio::time::Duration;
-        let mut rng = rand::rng();
+        let dur = Duration::from_millis(50);
 
-        let some_millis: u16 = rng.random();
-        let dur = Duration::from_millis(some_millis.to_u64().unwrap());
         let _ = tokio::time::sleep(dur);
+
         let t = chrono::offset::Local::now();
         let url = format!(
             "https://api.aiven.io/v1/project/{project_name}/service/{kafka_name}/topic/{}",
             self.name
         );
-        let response = match c
-            .get(&url)
-            .bearer_auth(&cfg.aiven_api_token)
-            .send()
-            .await
-        {
+        let response = match reqwest_client.get(&url).bearer_auth(&cfg.aiven_api_token).send().await {
             Ok(r) => r,
             Err(e) => {
                 let delta_t = chrono::offset::Local::now() - t;
@@ -178,21 +165,26 @@ impl AivenApiKafkaTopic {
             response_topics.len()
         );
 
-        use futures::stream::{self, StreamExt, TryStreamExt};
+        use futures::stream::{self, StreamExt};
 
-        // 1274 threads
-        try_join_all(
-            Self::from_json_list(response_topics)?
-                .iter_mut()
-                .map(|topic| {
-                    topic.populate_with_partitions_belonging_to_topic(
-                        reqwest_client,
-                        cfg,
-                        project_name,
-                        kafka_name,
-                    )
-                }),
-        )
-        .await
+        let mut topics = Self::from_json_list(response_topics)?;
+        let topics_with_partitions = stream::iter(topics.iter_mut())
+            .map(|topic| {
+                topic.populate_with_partitions_belonging_to_topic(
+                    reqwest_client,
+                    cfg,
+                    project_name,
+                    kafka_name,
+                )
+            })
+            .buffer_unordered(5) // ten is too many against aiven. Five works. idk about the other numbers in [5,10]
+            .collect::<Vec<_>>()
+            .await;
+
+        let _results: Vec<_> = topics_with_partitions
+            .into_iter()
+            .collect::<Result<Vec<_>>>()?;
+
+        Ok(topics)
     }
 }
