@@ -1,4 +1,4 @@
-use anyhow::{Result, bail};
+use color_eyre::eyre::{Result, bail};
 use serde::Deserialize;
 use tracing::info;
 

@@ -1,8 +1,8 @@
 use std::{collections::HashMap, fmt::Display};
 
-use anyhow::{Result, bail};
 use bigdecimal::BigDecimal;
 use chrono::{DateTime, Utc};
+use color_eyre::eyre::{Result, bail};
 use serde::Deserialize;
 use tracing::info;
 

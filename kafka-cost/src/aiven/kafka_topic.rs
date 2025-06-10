@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use anyhow::{Result, bail};
+use color_eyre::eyre::{Result, bail};
 use futures_util::future::try_join_all;
 use serde::Deserialize;
 use tracing::info;

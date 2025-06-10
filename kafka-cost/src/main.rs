@@ -1,8 +1,8 @@
 use std::{collections::HashMap, io::IsTerminal};
 
-use anyhow::{Result, bail};
 use bigdecimal::{BigDecimal, FromPrimitive, Zero};
 use chrono::{DateTime, Datelike, NaiveDate, Utc};
+use color_eyre::eyre::{ContextCompat, Result, anyhow, bail};
 use futures_util::future::try_join_all;
 use gcloud_bigquery::{
     client::{Client, ClientConfig},
@@ -47,7 +47,7 @@ fn client() -> Result<reqwest::Client> {
         .https_only(true)
         .user_agent(USER_AGENT)
         .build()
-        .map_err(anyhow::Error::msg)
+        .map_err(color_eyre::eyre::Error::msg)
 }
 
 #[derive(Debug, Clone)]
@@ -419,7 +419,7 @@ fn transform(
         let instance = &instances
             .iter()
             .find(|i| i.service_name == *service_name && i.year_month == date_as_string)
-            .ok_or_else(|| anyhow::anyhow!("No instance found for service: {}", service_name))?;
+            .wrap_err(format!("No instance found for service: {}", service_name))?;
 
         let total_tiered_storage = instance.aggregate_data_usage.tiered_size;
         for (name, usage) in &instance.teams {
@@ -578,5 +578,5 @@ async fn create_table(cfg: &Cfg, client: &BigqueryTableClient) -> Result<Table> 
     client
         .create(&table)
         .await
-        .map_err(|e| anyhow::anyhow!("Failed to create table: {}", e))
+        .map_err(|e| anyhow!("Failed to create table: {}", e))
 }
