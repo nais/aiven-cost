@@ -17,7 +17,7 @@ use gcloud_bigquery::{
 use serde::Serialize;
 use tracing::info;
 use tracing_subscriber::{
-    Registry, prelude::__tracing_subscriber_SubscriberExt, util::SubscriberInitExt,
+    EnvFilter, Registry, prelude::__tracing_subscriber_SubscriberExt, util::SubscriberInitExt,
 };
 
 mod aiven;
@@ -34,6 +34,7 @@ pub fn init_tracing_subscriber() -> Result<()> {
     Registry::default()
         .with(plain_log_format)
         .with(json_log_format)
+        .with(EnvFilter::from_default_env())
         .try_init()?;
 
     Ok(())
