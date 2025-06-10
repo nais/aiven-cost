@@ -82,11 +82,15 @@ impl AivenApiKafkaTopic {
             "https://api.aiven.io/v1/project/{project_name}/service/{kafka_name}/topic/{}",
             self.name
         );
-        let response = reqwest_client
+        let response = match reqwest_client
             .get(&url)
             .bearer_auth(&cfg.aiven_api_token)
             .send()
-            .await?;
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => bail!("HTTP request failed with: {e}"),
+        };
         let response_status = &response.status();
         let Ok(mut response_body) =
             serde_json::from_str::<HashMap<String, serde_json::Value>>(&(response.text().await?))
