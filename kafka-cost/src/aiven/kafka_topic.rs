@@ -77,12 +77,16 @@ impl AivenApiKafkaTopic {
         project_name: &str,
         kafka_name: &str,
     ) -> Result<Self> {
-
         let url = format!(
             "https://api.aiven.io/v1/project/{project_name}/service/{kafka_name}/topic/{}",
             self.name
         );
-        let response = match reqwest_client.get(&url).bearer_auth(&cfg.aiven_api_token).send().await {
+        let response = match reqwest_client
+            .get(&url)
+            .bearer_auth(&cfg.aiven_api_token)
+            .send()
+            .await
+        {
             Ok(r) => r,
             Err(e) => {
                 bail!("HTTP request failed with: {:?}", e)

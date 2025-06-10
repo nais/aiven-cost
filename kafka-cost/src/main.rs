@@ -1,4 +1,4 @@
-use std::{collections::HashMap, io::IsTerminal};
+use std::{collections::HashMap, env, io::IsTerminal};
 
 use bigdecimal::{BigDecimal, FromPrimitive, Zero};
 use chrono::{DateTime, Datelike, NaiveDate, Utc};
@@ -15,9 +15,10 @@ use gcloud_bigquery::{
     storage::row::Row as ReadRow,
 };
 use serde::Serialize;
-use tracing::info;
+use tracing::{info, level_filters::LevelFilter, warn};
 use tracing_subscriber::{
-    EnvFilter, Registry, prelude::__tracing_subscriber_SubscriberExt, util::SubscriberInitExt,
+    EnvFilter, Registry, filter, prelude::__tracing_subscriber_SubscriberExt,
+    util::SubscriberInitExt,
 };
 
 mod aiven;
@@ -26,16 +27,38 @@ use aiven::{AivenApiKafka, AivenApiKafkaInvoiceLine, AivenInvoice, KafkaInvoiceL
 pub fn init_tracing_subscriber() -> Result<()> {
     use tracing_subscriber::fmt as layer_fmt;
 
-    let (plain_log_format, json_log_format) = match std::io::stdout().is_terminal() {
-        true => (Some(layer_fmt::layer().compact()), None),
-        false => (None, Some(layer_fmt::layer().json().flatten_event(true))),
+    let (we_shall_not_json, we_shall_json) = if std::io::stdout().is_terminal() {
+        (Some(layer_fmt::layer().compact()), None)
+    } else {
+        (None, Some(layer_fmt::layer().json().flatten_event(true)))
     };
 
+    let env_filter = EnvFilter::builder()
+        .with_default_directive(LevelFilter::INFO.into())
+        .from_env();
+    let (we_got_valid_log_env, we_got_no_valid_log_env) = env_filter.map_or_else(
+        |_| {
+            (
+                None,
+                Some(filter::Targets::new().with_default(LevelFilter::INFO)),
+            )
+        },
+        |log_level| (Some(log_level), None),
+    );
     Registry::default()
-        .with(plain_log_format)
-        .with(json_log_format)
-        .with(EnvFilter::from_default_env())
+        .with(we_shall_not_json)
+        .with(we_shall_json)
+        .with(we_got_valid_log_env)
+        .with(we_got_no_valid_log_env)
         .try_init()?;
+
+    // This check is down here because log framework gets set/configured first in previous statement
+    if let Ok(log_value) = env::var("RUST_LOG") {
+        let rust_log_set_to_invalid_syntax = EnvFilter::try_from_default_env().is_err();
+        if rust_log_set_to_invalid_syntax {
+            warn!("Invalid syntax in found env var `RUST_LOG`: {}", log_value);
+        }
+    }
 
     Ok(())
 }
@@ -46,7 +69,6 @@ fn client() -> Result<reqwest::Client> {
     reqwest::Client::builder()
         .https_only(true)
         .user_agent(USER_AGENT)
-//        .pool_max_idle_per_host(max)
         .build()
         .map_err(color_eyre::eyre::Error::msg)
 }
@@ -102,7 +124,7 @@ async fn main() -> Result<()> {
                 current_oldest
             });
     let date_of_latest_paid_invoice: DateTime<Utc> = DateTime::from_naive_utc_and_offset(
-        NaiveDate::parse_from_str(&format!("{}-01", latest_date_string), "%Y-%m-%d")?.into(),
+        NaiveDate::parse_from_str(&format!("{latest_date_string}-01"), "%Y-%m-%d")?.into(),
         Utc,
     );
     info!(
@@ -130,12 +152,11 @@ async fn get_rows_in_bigquery_table(
         dataset_id: cfg.bigquery_dataset.clone(),
         table_id: cfg.bigquery_table.clone(),
     };
-    let mut reader = match bigquery_client
+    let Ok(mut reader) = bigquery_client
         .read_table::<ReadRow>(&table_reference, None)
         .await
-    {
-        Ok(r) => r,
-        Err(_) => return Ok(Vec::new()),
+    else {
+        return Ok(Vec::new());
     };
     let mut rows = Vec::new();
     while let Some(row) = reader.next().await? {
@@ -420,7 +441,7 @@ fn transform(
         let instance = &instances
             .iter()
             .find(|i| i.service_name == *service_name && i.year_month == date_as_string)
-            .wrap_err(format!("No instance found for service: {}", service_name))?;
+            .wrap_err(format!("No instance found for service: {service_name}"))?;
 
         let total_tiered_storage = instance.aggregate_data_usage.tiered_size;
         for (name, usage) in &instance.teams {
