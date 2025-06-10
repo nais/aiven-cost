@@ -49,9 +49,7 @@
           config.Entrypoint = [ (lib.getExe kafka-cost) ];
         };
         spec = pkgs.writeText "spec.yaml" (
-          import .nais/kafka-cost.nix { inherit name tag; } # Has to be a list
-          |> builtins.map builtins.toJSON
-          |> builtins.concatStringsSep "\n--\n"
+          builtins.concatStringsSep "\n--\n" (builtins.map builtins.toJSON (import .nais/kafka-cost.nix { inherit name tag; }))
         );
       in
       rec {
@@ -80,5 +78,4 @@
         packages.spec = spec;
       }
     );
-  nixConfig.extra-experimental-features = [ "pipe-operators" ];
 }
