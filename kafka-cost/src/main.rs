@@ -2,7 +2,7 @@ use std::{collections::HashMap, env, io::IsTerminal};
 
 use bigdecimal::{BigDecimal, FromPrimitive, Zero};
 use chrono::{DateTime, Datelike, NaiveDate, Utc};
-use color_eyre::eyre::{ContextCompat, Result, anyhow, bail};
+use color_eyre::eyre::{Result, anyhow, bail};
 use futures_util::future::try_join_all;
 use gcloud_bigquery::{
     client::{Client, ClientConfig},
@@ -22,7 +22,8 @@ use tracing_subscriber::{
 };
 
 mod aiven;
-use aiven::{AivenApiKafka, AivenApiKafkaInvoiceLine, AivenInvoice, KafkaInvoiceLineCostType};
+use crate::aiven::AivenApiKafkaTopic;
+use aiven::{AivenApiKafkaInvoiceLine, AivenInvoice, KafkaInvoiceLineCostType};
 
 pub fn init_tracing_subscriber() -> Result<()> {
     use tracing_subscriber::fmt as layer_fmt;
@@ -250,7 +251,8 @@ async fn extract(
     info!("Fetching topics per kafka invoice line");
     // There's a bunch of suspicious try_join_alls in this codebase, they should probably be chunked
     // or limited concurrency rather than a herd of 1000 threads hitting aiven.
-    let res =           (try_join_all(
+    let res = (
+        try_join_all(
             kafka_invoice_lines
                 .clone()
                 .into_iter()
@@ -259,7 +261,8 @@ async fn extract(
                 }),
         )
         .await?,
-    kafka_tiered_storage_cost_invoice_lines);
+        kafka_tiered_storage_cost_invoice_lines,
+    );
 
     Ok(res)
 }
@@ -313,41 +316,41 @@ where
     serializer.serialize_str(&format!("{value:.2}"))
 }
 
-/// Sum up all topics' sizes per team
 fn aggregate_topic_usage_by_team(
-    kafka_instance: &AivenApiKafka,
+    topics: &[AivenApiKafkaTopic],
 ) -> Result<HashMap<TeamName, DataUsage>> {
-    info!(
-        "aggregating usage per team for {}",
-        kafka_instance.service_name
-    );
-    info!("here c");
-    kafka_instance
-        .topics
-        .iter()
-        .map(|topic| {
-            let Some(team_name) = topic.name.split('.').next() else {
-                bail!("Unable to find team name in topic name: '{}'", topic.name)
-            };
-            Ok((
-                team_name.to_owned(),
-                topic
-                    .partitions
-                    .iter()
-                    .map(|partition| (partition.size, partition.remote_size.unwrap_or(0)))
-                    .fold(
-                        DataUsage {
-                            base_size: 0,
-                            tiered_size: 0,
-                        },
-                        |acc, (base, tiered)| DataUsage {
-                            base_size: acc.base_size + base,
-                            tiered_size: acc.tiered_size + tiered,
-                        },
-                    ),
-            ))
-        })
-        .collect()
+    let mut usage_by_team: HashMap<String, DataUsage> = HashMap::new();
+
+    for topic in topics.iter() {
+        let Some(team_name) = topic.name.split('.').next() else {
+            bail!("Unable to find team name in topic name: '{}'", topic.name)
+        };
+
+        let topic_usage = topic
+            .partitions
+            .iter()
+            .map(|partition| (partition.size, partition.remote_size.unwrap_or(0)))
+            .fold(
+                DataUsage {
+                    base_size: 0,
+                    tiered_size: 0,
+                },
+                |acc, (base, tiered)| DataUsage {
+                    base_size: acc.base_size + base,
+                    tiered_size: acc.tiered_size + tiered,
+                },
+            );
+
+        usage_by_team
+            .entry(team_name.to_owned())
+            .and_modify(|e: &mut DataUsage| {
+                e.base_size += topic_usage.base_size;
+                e.tiered_size += topic_usage.tiered_size;
+            })
+            .or_insert(topic_usage);
+    }
+
+    Ok(usage_by_team)
 }
 
 fn transform(
@@ -364,21 +367,24 @@ fn transform(
             project_name: line.project_name.clone(),
         };
         let kafka_instances = tenant_envs.entry(tenant_key).or_default();
-        let teams = aggregate_topic_usage_by_team(&line.kafka_instance)?;
-        dbg!(&teams.iter().any(|(_, p)| p.tiered_size > 0));
+
+        info!(
+            "aggregating usage per team for {}",
+            &line.kafka_instance.service_name
+        );
+
+        let teams = aggregate_topic_usage_by_team(&line.kafka_instance.topics)?;
 
         let service_name = line.service_name.clone();
         let agg = teams.iter().fold(
-                DataUsage {
-                    base_size: 0,
-                    tiered_size: 0,
-                },
-                |acc, (_, du)| {
-                    DataUsage {
-                        base_size: acc.base_size + du.base_size,
-                        tiered_size: acc.tiered_size + du.tiered_size,
-                    }
-                },
+            DataUsage {
+                base_size: 0,
+                tiered_size: 0,
+            },
+            |acc, (_, du)| DataUsage {
+                base_size: acc.base_size + du.base_size,
+                tiered_size: acc.tiered_size + du.tiered_size,
+            },
         );
         info!("aggregated {:?}", agg);
         // Insert data into collector variable
@@ -449,13 +455,15 @@ fn transform(
                     .timestamp_begin
                     .format("%Y-%m")
                     .to_string();
+                if instance.year_month != year_month {
+                    continue;
+                }
 
                 for (name, usage) in &instance.teams {
                     if name == "teamsykmelding.privat-arena-input" {
                         dbg!(&usage);
                     }
                     if usage.tiered_size.is_zero() {
-
                         continue;
                     }
 

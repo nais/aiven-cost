@@ -77,6 +77,7 @@ impl AivenApiKafka {
             &self.service_name,
         )
         .await?;
+
         info!(
             "Found {} topics for {}'s '{}' environment kafka instance '{}'",
             self.topics.len(),
@@ -84,6 +85,7 @@ impl AivenApiKafka {
             self.environment,
             self.service_name
         );
+
         Ok(self)
     }
 }

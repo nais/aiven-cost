@@ -9,6 +9,7 @@ use tracing::info;
 mod kafka_instance;
 mod kafka_topic;
 pub use self::kafka_instance::AivenApiKafka;
+pub use self::kafka_topic::AivenApiKafkaTopic;
 use crate::Cfg;
 
 #[derive(Debug, Deserialize, PartialEq, Eq)]

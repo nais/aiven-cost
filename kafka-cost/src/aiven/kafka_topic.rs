@@ -158,8 +158,8 @@ impl AivenApiKafkaTopic {
             response_topics.len()
         );
 
-        let mut topics = Self::from_json_list(response_topics)?;
-        let topics_with_partitions = stream::iter(topics.iter_mut())
+        let mut topics_with_no_partitions = Self::from_json_list(response_topics)?;
+        let topics_with_partitions = stream::iter(topics_with_no_partitions.iter_mut())
             .map(|topic| {
                 topic.populate_with_partitions_belonging_to_topic(
                     reqwest_client,
@@ -172,11 +172,9 @@ impl AivenApiKafkaTopic {
             .collect::<Vec<_>>()
             .await;
 
-        let topics_and_partitions: Vec<_> = topics_with_partitions
+        Ok(topics_with_partitions
             .into_iter()
-            .collect::<Result<Vec<_>>>()?;
-
-//         dbg!(&topics_and_partitions.iter().filter(|ta| ta.partitions.iter().any(|p| p.remote_size.is_some())).collect::<Vec<_>>());
-        Ok(topics_and_partitions) // we have partitions with some tiered size
+            .filter_map(Result::ok)
+            .collect())
     }
 }
