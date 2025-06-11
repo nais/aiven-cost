@@ -136,6 +136,7 @@ async fn main() -> Result<()> {
         extract(&aiven_client, &cfg, &date_of_latest_paid_invoice).await?;
     let data = transform(&kafka_base_cost_lines, &kafka_base_tiered_storage_lines)?;
 
+    todo!("o");
     load(&cfg, &bigquery_client, data).await?;
 
     info!("kafka-cost completed successfully");
@@ -211,6 +212,7 @@ async fn extract(
         .await?
         .into_iter()
         .flatten()
+        .filter(|invoice_line| invoice_line.project_name == "nav-dev")
         .collect();
 
     let kafka_tiered_storage_cost_invoice_lines: Vec<_> = kafka_invoice_lines
@@ -248,8 +250,7 @@ async fn extract(
     info!("Fetching topics per kafka invoice line");
     // There's a bunch of suspicious try_join_alls in this codebase, they should probably be chunked
     // or limited concurrency rather than a herd of 1000 threads hitting aiven.
-    Ok((
-        try_join_all(
+    let res =           (try_join_all(
             kafka_invoice_lines
                 .clone()
                 .into_iter()
@@ -258,8 +259,9 @@ async fn extract(
                 }),
         )
         .await?,
-        kafka_tiered_storage_cost_invoice_lines,
-    ))
+    kafka_tiered_storage_cost_invoice_lines);
+
+    Ok(res)
 }
 
 #[derive(Hash, Eq, PartialEq, Debug, Clone)]
@@ -319,6 +321,7 @@ fn aggregate_topic_usage_by_team(
         "aggregating usage per team for {}",
         kafka_instance.service_name
     );
+    info!("here c");
     kafka_instance
         .topics
         .iter()
@@ -337,10 +340,9 @@ fn aggregate_topic_usage_by_team(
                             base_size: 0,
                             tiered_size: 0,
                         },
-                        |mut acc, (base, tiered)| {
-                            acc.base_size += base;
-                            acc.tiered_size += tiered;
-                            acc
+                        |acc, (base, tiered)| DataUsage {
+                            base_size: acc.base_size + base,
+                            tiered_size: acc.tiered_size + tiered,
                         },
                     ),
             ))
@@ -363,21 +365,26 @@ fn transform(
         };
         let kafka_instances = tenant_envs.entry(tenant_key).or_default();
         let teams = aggregate_topic_usage_by_team(&line.kafka_instance)?;
+        dbg!(&teams.iter().any(|(_, p)| p.tiered_size > 0));
 
-        // Insert data into collector variable
-        kafka_instances.push(KafkaInstance {
-            service_name: line.service_name.clone(),
-            aggregate_data_usage: teams.iter().fold(
+        let service_name = line.service_name.clone();
+        let agg = teams.iter().fold(
                 DataUsage {
                     base_size: 0,
                     tiered_size: 0,
                 },
-                |mut acc, (_, du)| {
-                    acc.base_size += du.base_size;
-                    acc.tiered_size += du.tiered_size;
-                    acc
+                |acc, (_, du)| {
+                    DataUsage {
+                        base_size: acc.base_size + du.base_size,
+                        tiered_size: acc.tiered_size + du.tiered_size,
+                    }
                 },
-            ),
+        );
+        info!("aggregated {:?}", agg);
+        // Insert data into collector variable
+        kafka_instances.push(KafkaInstance {
+            service_name,
+            aggregate_data_usage: agg,
             teams,
             invoice_state: line.invoice_state.clone(),
             base_cost: line.line_total_local.clone(),
@@ -426,6 +433,7 @@ fn transform(
             // Not every Kafka instance has tiered storage, so we iterate separately
             // for the teams using it, calculate based on their tiered storage size
             let total_tiered_storage = instance.aggregate_data_usage.tiered_size;
+            info!("TOTAL TIERED STORAGE {}", total_tiered_storage);
             if total_tiered_storage.is_zero() {
                 continue;
             }
@@ -441,12 +449,13 @@ fn transform(
                     .timestamp_begin
                     .format("%Y-%m")
                     .to_string();
-                if &instance.year_month != &year_month {
-                    continue;
-                }
 
                 for (name, usage) in &instance.teams {
+                    if name == "teamsykmelding.privat-arena-input" {
+                        dbg!(&usage);
+                    }
                     if usage.tiered_size.is_zero() {
+
                         continue;
                     }
 

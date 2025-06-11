@@ -81,6 +81,7 @@ impl AivenApiKafkaTopic {
             "https://api.aiven.io/v1/project/{project_name}/service/{kafka_name}/topic/{}",
             self.name
         );
+
         let response = match reqwest_client
             .get(&url)
             .bearer_auth(&cfg.aiven_api_token)
@@ -145,12 +146,11 @@ impl AivenApiKafkaTopic {
         else {
             bail!("Unable to parse json returned from: GET {response_status} {url}")
         };
-        let key = "topics";
         let Some(response_topics) = response_body
-            .get_mut(key)
+            .get_mut("topics")
             .and_then(|topic| topic.as_array())
         else {
-            bail!("missing field name:\n\t`{key}`\n\t\tGET {response_status} {url}")
+            bail!("missing field name:\n\t`topics` \n\t\tGET {response_status} {url}")
         };
 
         info!(
@@ -172,10 +172,11 @@ impl AivenApiKafkaTopic {
             .collect::<Vec<_>>()
             .await;
 
-        let _results: Vec<_> = topics_with_partitions
+        let topics_and_partitions: Vec<_> = topics_with_partitions
             .into_iter()
             .collect::<Result<Vec<_>>>()?;
 
-        Ok(topics)
+//         dbg!(&topics_and_partitions.iter().filter(|ta| ta.partitions.iter().any(|p| p.remote_size.is_some())).collect::<Vec<_>>());
+        Ok(topics_and_partitions) // we have partitions with some tiered size
     }
 }
