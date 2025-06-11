@@ -311,47 +311,47 @@ where
     serializer.serialize_str(&format!("{value:.2}"))
 }
 
+/// Sum up all topics' sizes per team
+fn aggregate_topic_usage_by_team(
+    kafka_instance: &AivenApiKafka,
+) -> Result<HashMap<TeamName, DataUsage>> {
+    info!(
+        "aggregating usage per team for {}",
+        kafka_instance.service_name
+    );
+    kafka_instance
+        .topics
+        .iter()
+        .map(|topic| {
+            let Some(team_name) = topic.name.split('.').next() else {
+                bail!("Unable to find team name in topic name: '{}'", topic.name)
+            };
+            Ok((
+                team_name.to_owned(),
+                topic
+                    .partitions
+                    .iter()
+                    .map(|partition| (partition.size, partition.remote_size.unwrap_or(0)))
+                    .fold(
+                        DataUsage {
+                            base_size: 0,
+                            tiered_size: 0,
+                        },
+                        |mut acc, (base, tiered)| {
+                            acc.base_size += base;
+                            acc.tiered_size += tiered;
+                            acc
+                        },
+                    ),
+            ))
+        })
+        .collect()
+}
+
 fn transform(
     kafka_base_cost_lines: &[AivenApiKafkaInvoiceLine],
     kafka_tiered_storage_cost_lines: &[AivenApiKafkaInvoiceLine],
 ) -> Result<Vec<BigQueryTableRowData>> {
-    /// Sum up all topics' sizes per team
-    fn aggregate_topic_usage_by_team(
-        kafka_instance: &AivenApiKafka,
-    ) -> Result<HashMap<TeamName, DataUsage>> {
-        info!(
-            "aggregating usage per team for {}",
-            kafka_instance.service_name
-        );
-        kafka_instance
-            .topics
-            .iter()
-            .map(|topic| {
-                let Some(team_name) = topic.name.split('.').next() else {
-                    bail!("Unable to find team name in topic name: '{}'", topic.name)
-                };
-                Ok((
-                    team_name.to_owned(),
-                    topic
-                        .partitions
-                        .iter()
-                        .map(|partition| (partition.size, partition.remote_size.unwrap_or(0)))
-                        .fold(
-                            DataUsage {
-                                base_size: 0,
-                                tiered_size: 0,
-                            },
-                            |mut acc, (base, tiered)| {
-                                acc.base_size += base;
-                                acc.tiered_size += tiered;
-                                acc
-                            },
-                        ),
-                ))
-            })
-            .collect()
-    }
-
     // We start by making collection of all tenants>envs>instances>teams, and their usage of Kafka
     let mut tenant_envs: HashMap<TenantEnv, Vec<KafkaInstance>> = HashMap::new();
     for line in kafka_base_cost_lines {
@@ -422,49 +422,50 @@ fn transform(
                     number_of_days: instance.days_in_month,
                 });
             }
-        }
-    }
 
-    // Not every Kafka instance has tiered storage, so we iterate separately
-    // for the teams using it, calculate based on their tiered storage size
-    for line in kafka_tiered_storage_cost_lines {
-        if line.kafka_instance.topics.is_empty() {
-            continue;
-        }
-        let project_name = &line.project_name;
-        let env = &line.kafka_instance.environment;
-        let tenant = &line.kafka_instance.tenant;
-        let instances = &tenant_envs[&TenantEnv {
-            tenant: tenant.to_owned(),
-            environment: env.to_owned(),
-            project_name: project_name.to_owned(),
-        }];
-
-        let service_name = &line.service_name;
-        let date_as_string = line.timestamp_begin.format("%Y-%m").to_string();
-        let instance = &instances
-            .iter()
-            .find(|i| i.service_name == *service_name && i.year_month == date_as_string)
-            .wrap_err(format!("No instance found for service: {service_name}"))?;
-
-        let total_tiered_storage = instance.aggregate_data_usage.tiered_size;
-        for (name, usage) in &instance.teams {
-            if usage.tiered_size.is_zero() {
+            // Not every Kafka instance has tiered storage, so we iterate separately
+            // for the teams using it, calculate based on their tiered storage size
+            let total_tiered_storage = instance.aggregate_data_usage.tiered_size;
+            if total_tiered_storage.is_zero() {
                 continue;
             }
-            info!("adding tiered storage cost for {}", name);
-            bigquery_data_rows.push(BigQueryTableRowData {
-                project_name: project_name.to_owned(),
-                environment: env.to_owned(),
-                team: name.to_owned(),
-                service: String::from("kafka-tiered"),
-                status: instance.invoice_state.to_string(),
-                service_name: service_name.to_owned(),
-                tenant: tenant.to_owned(),
-                cost: &line.line_total_local * (usage.tiered_size / total_tiered_storage),
-                date: date_as_string.clone(),
-                number_of_days: line.timestamp_begin.num_days_in_month(),
-            });
+
+            for tiered_storage_line in kafka_tiered_storage_cost_lines {
+                if tiered_storage_line.service_name != instance.service_name
+                    && tiered_storage_line.project_name != tenant_env.project_name
+                {
+                    continue;
+                }
+
+                let year_month = tiered_storage_line
+                    .timestamp_begin
+                    .format("%Y-%m")
+                    .to_string();
+                if &instance.year_month != &year_month {
+                    continue;
+                }
+
+                for (name, usage) in &instance.teams {
+                    if usage.tiered_size.is_zero() {
+                        continue;
+                    }
+
+                    info!("adding tiered storage cost for {}", name);
+                    bigquery_data_rows.push(BigQueryTableRowData {
+                        project_name: tenant_env.project_name.to_owned(),
+                        environment: tenant_env.environment.to_owned(),
+                        team: name.to_owned(),
+                        service: String::from("kafka-tiered"),
+                        status: instance.invoice_state.to_string(),
+                        service_name: instance.service_name.to_owned(),
+                        tenant: tenant_env.tenant.to_owned(),
+                        cost: &tiered_storage_line.line_total_local
+                            * (usage.tiered_size / total_tiered_storage),
+                        date: year_month.clone(),
+                        number_of_days: tiered_storage_line.timestamp_begin.num_days_in_month(),
+                    });
+                }
+            }
         }
     }
 
