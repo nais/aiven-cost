@@ -137,7 +137,6 @@ async fn main() -> Result<()> {
         extract(&aiven_client, &cfg, &date_of_latest_paid_invoice).await?;
     let data = transform(&kafka_base_cost_lines, &kafka_base_tiered_storage_lines)?;
 
-    todo!("o");
     load(&cfg, &bigquery_client, data).await?;
 
     info!("kafka-cost completed successfully");
