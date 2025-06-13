@@ -182,7 +182,7 @@ async fn get_rows_in_bigquery_table(
             status,
             service_name,
             tenant,
-            cost,
+            cost: cost.to_string(),
             date,
             ..Default::default()
         });
@@ -298,20 +298,9 @@ struct BigQueryTableRowData {
     status: String,
     service_name: String,
     tenant: String,
-    #[serde(serialize_with = "big_decimal_truncat_serialization")]
-    cost: BigDecimal,
+    cost: String,
     date: String,
     number_of_days: u8,
-}
-
-fn big_decimal_truncat_serialization<S>(
-    value: &BigDecimal,
-    serializer: S,
-) -> Result<S::Ok, S::Error>
-where
-    S: serde::Serializer,
-{
-    serializer.serialize_str(&format!("{value:.2}"))
 }
 
 fn aggregate_topic_usage_by_team(
@@ -435,7 +424,7 @@ fn transform(
                     status: instance.invoice_state.to_string(),
                     service_name: instance.service_name.clone(),
                     tenant: tenant_env.tenant.clone(),
-                    cost,
+                    cost: cost.to_plain_string(),
                     date: instance.year_month.clone(),
                     number_of_days: instance.days_in_month,
                 });
@@ -483,7 +472,7 @@ fn transform(
                         status: instance.invoice_state.to_string(),
                         service_name: instance.service_name.to_owned(),
                         tenant: tenant_env.tenant.to_owned(),
-                        cost,
+                        cost: cost.to_string(),
                         date: year_month.clone(),
                         number_of_days: tiered_storage_line.timestamp_begin.num_days_in_month(),
                     });
@@ -611,7 +600,7 @@ async fn create_table(cfg: &Cfg, client: &BigqueryTableClient) -> Result<Table> 
                 string_field("tenant"),
                 TableFieldSchema {
                     name: "cost".to_owned(),
-                    data_type: TableFieldType::Bignumeric,
+                    data_type: TableFieldType::String,
                     ..Default::default()
                 },
                 string_field("date"),
