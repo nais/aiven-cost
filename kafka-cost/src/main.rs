@@ -391,7 +391,7 @@ fn transform(
             aggregate_data_usage: agg,
             teams,
             invoice_state: line.invoice_state.clone(),
-            base_cost: line.line_total_local.clone(),
+            base_cost: line.line_total_local,
             year_month: line.timestamp_begin.format("%Y-%m").to_string(),
             days_in_month: line.timestamp_begin.num_days_in_month(),
         });
@@ -415,13 +415,13 @@ fn transform(
                 instance.service_name
             );
             for (team_name, team_data_usage) in &instance.teams {
-                let half_base_cost = instance.base_cost.clone() / 2.0;
+                let half_base_cost = instance.base_cost / 2.0;
                 let team_divided_base_cost = half_base_cost / num_teams;
 
                 let storage_weight =
                     team_data_usage.base_size / instance.aggregate_data_usage.base_size;
                 let storage_weighted_storage_cost =
-                    &team_divided_base_cost + (half_base_cost * storage_weight);
+                    team_divided_base_cost + (half_base_cost * storage_weight);
 
                 let cost =
                     BigDecimal::from_f64(team_divided_base_cost + storage_weighted_storage_cost)
@@ -435,7 +435,7 @@ fn transform(
                     status: instance.invoice_state.to_string(),
                     service_name: instance.service_name.clone(),
                     tenant: tenant_env.tenant.clone(),
-                    cost: cost,
+                    cost,
                     date: instance.year_month.clone(),
                     number_of_days: instance.days_in_month,
                 });
@@ -469,7 +469,7 @@ fn transform(
                     }
 
                     let cost = BigDecimal::from_f64(
-                        &tiered_storage_line.line_total_local
+                        tiered_storage_line.line_total_local
                             * (usage.tiered_size / total_tiered_storage),
                     )
                     .unwrap_or(BigDecimal::zero());
@@ -483,7 +483,7 @@ fn transform(
                         status: instance.invoice_state.to_string(),
                         service_name: instance.service_name.to_owned(),
                         tenant: tenant_env.tenant.to_owned(),
-                        cost: cost,
+                        cost,
                         date: year_month.clone(),
                         number_of_days: tiered_storage_line.timestamp_begin.num_days_in_month(),
                     });
