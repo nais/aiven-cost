@@ -212,7 +212,6 @@ async fn extract(
         .await?
         .into_iter()
         .flatten()
-        .filter(|invoice_line| invoice_line.project_name == "nav-dev")
         .collect();
 
     let kafka_tiered_storage_cost_invoice_lines: Vec<_> = kafka_invoice_lines
@@ -438,7 +437,6 @@ fn transform(
             // Not every Kafka instance has tiered storage, so we iterate separately
             // for the teams using it, calculate based on their tiered storage size
             let total_tiered_storage = instance.aggregate_data_usage.tiered_size;
-            info!("TOTAL TIERED STORAGE {}", total_tiered_storage);
             if total_tiered_storage.is_zero() {
                 continue;
             }
@@ -459,9 +457,6 @@ fn transform(
                 }
 
                 for (name, usage) in &instance.teams {
-                    if name == "teamsykmelding.privat-arena-input" {
-                        dbg!(&usage);
-                    }
                     if usage.tiered_size.is_zero() {
                         continue;
                     }
