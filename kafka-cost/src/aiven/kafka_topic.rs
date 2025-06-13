@@ -17,9 +17,9 @@ pub enum AivenApiKafkaTopicState {
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct AivenApiKafkaTopicPartition {
     /// In bytes according to the Aiven API
-    pub remote_size: Option<u64>,
+    pub remote_size: Option<f64>,
     /// In bytes according to the Aiven API
-    pub size: u64,
+    pub size: f64,
 }
 
 // Need to subtract this:

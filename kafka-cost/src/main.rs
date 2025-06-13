@@ -275,7 +275,7 @@ struct TenantEnv {
 type TeamName = String;
 struct KafkaInstance {
     service_name: String,
-    base_cost: BigDecimal,
+    base_cost: f64,
     aggregate_data_usage: DataUsage,
     invoice_state: String,
     teams: HashMap<TeamName, DataUsage>,
@@ -283,10 +283,10 @@ struct KafkaInstance {
     days_in_month: u8,
 }
 
-#[derive(Eq, PartialEq, Debug, Default, Clone)]
+#[derive(Debug, Default, Clone)]
 struct DataUsage {
-    base_size: u64,
-    tiered_size: u64,
+    base_size: f64,
+    tiered_size: f64,
 }
 
 #[derive(Serialize, Debug, Default, PartialEq, Eq, Clone)]
@@ -327,11 +327,11 @@ fn aggregate_topic_usage_by_team(
         let topic_usage = topic
             .partitions
             .iter()
-            .map(|partition| (partition.size, partition.remote_size.unwrap_or(0)))
+            .map(|partition| (partition.size, partition.remote_size.unwrap_or(0.0)))
             .fold(
                 DataUsage {
-                    base_size: 0,
-                    tiered_size: 0,
+                    base_size: 0.0,
+                    tiered_size: 0.0,
                 },
                 |acc, (base, tiered)| DataUsage {
                     base_size: acc.base_size + base,
@@ -376,8 +376,8 @@ fn transform(
         let service_name = line.service_name.clone();
         let agg = teams.iter().fold(
             DataUsage {
-                base_size: 0,
-                tiered_size: 0,
+                base_size: 0.0,
+                tiered_size: 0.0,
             },
             |acc, (_, du)| DataUsage {
                 base_size: acc.base_size + du.base_size,
@@ -401,8 +401,11 @@ fn transform(
     let mut bigquery_data_rows = Vec::new();
     for (tenant_env, kafka_instances) in &tenant_envs {
         for instance in kafka_instances {
-            let Some(num_teams) = BigDecimal::from_usize(instance.teams.len()) else {
-                bail!("Unable to convert to BigDecimal: {}", instance.teams.len())
+            let Some(num_teams) = f64::from_usize(instance.teams.len()) else {
+                bail!(
+                    "Unable to convert teams.len() to float: {}",
+                    instance.teams.len()
+                )
             };
             info!(
                 "calculating kafka cost for {} teams for {}/{}/{}",
@@ -412,13 +415,17 @@ fn transform(
                 instance.service_name
             );
             for (team_name, team_data_usage) in &instance.teams {
-                let half_base_cost = instance.base_cost.clone() / 2;
-                let team_divided_base_cost = &half_base_cost / num_teams.clone();
+                let half_base_cost = instance.base_cost.clone() / 2.0;
+                let team_divided_base_cost = half_base_cost / num_teams;
 
                 let storage_weight =
                     team_data_usage.base_size / instance.aggregate_data_usage.base_size;
                 let storage_weighted_storage_cost =
                     &team_divided_base_cost + (half_base_cost * storage_weight);
+
+                let cost =
+                    BigDecimal::from_f64(team_divided_base_cost + storage_weighted_storage_cost)
+                        .unwrap_or(BigDecimal::zero());
 
                 bigquery_data_rows.push(BigQueryTableRowData {
                     project_name: tenant_env.project_name.clone(),
@@ -428,7 +435,7 @@ fn transform(
                     status: instance.invoice_state.to_string(),
                     service_name: instance.service_name.clone(),
                     tenant: tenant_env.tenant.clone(),
-                    cost: team_divided_base_cost + storage_weighted_storage_cost,
+                    cost: cost,
                     date: instance.year_month.clone(),
                     number_of_days: instance.days_in_month,
                 });
@@ -461,6 +468,12 @@ fn transform(
                         continue;
                     }
 
+                    let cost = BigDecimal::from_f64(
+                        &tiered_storage_line.line_total_local
+                            * (usage.tiered_size / total_tiered_storage),
+                    )
+                    .unwrap_or(BigDecimal::zero());
+
                     info!("adding tiered storage cost for {}", name);
                     bigquery_data_rows.push(BigQueryTableRowData {
                         project_name: tenant_env.project_name.to_owned(),
@@ -470,8 +483,7 @@ fn transform(
                         status: instance.invoice_state.to_string(),
                         service_name: instance.service_name.to_owned(),
                         tenant: tenant_env.tenant.to_owned(),
-                        cost: &tiered_storage_line.line_total_local
-                            * (usage.tiered_size / total_tiered_storage),
+                        cost: cost,
                         date: year_month.clone(),
                         number_of_days: tiered_storage_line.timestamp_begin.num_days_in_month(),
                     });

@@ -4,6 +4,7 @@ use bigdecimal::BigDecimal;
 use chrono::{DateTime, Utc};
 use color_eyre::eyre::{Result, bail};
 use serde::Deserialize;
+use serde::de::{self, Deserializer};
 use tracing::info;
 
 mod kafka_instance;
@@ -91,6 +92,14 @@ pub enum KafkaInvoiceLineCostType {
     TieredStorage,
 }
 
+fn string_to_f64<'de, D>(deserializer: D) -> Result<f64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let s = String::deserialize(deserializer)?;
+    s.parse::<f64>().map_err(de::Error::custom)
+}
+
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct AivenApiKafkaInvoiceLine {
     #[serde(skip)]
@@ -101,7 +110,8 @@ pub struct AivenApiKafkaInvoiceLine {
     pub invoice_state: String,
     #[serde(skip)]
     pub kafka_instance: AivenApiKafka,
-    pub line_total_local: BigDecimal,
+    #[serde(deserialize_with = "string_to_f64")]
+    pub line_total_local: f64,
     pub timestamp_begin: DateTime<Utc>,
 }
 
