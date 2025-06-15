@@ -472,7 +472,7 @@ fn transform(
                         status: instance.invoice_state.to_string(),
                         service_name: instance.service_name.to_owned(),
                         tenant: tenant_env.tenant.to_owned(),
-                        cost: cost.to_string(),
+                        cost: cost.to_plain_string(),
                         date: year_month.clone(),
                         number_of_days: tiered_storage_line.timestamp_begin.num_days_in_month(),
                     });
@@ -598,11 +598,7 @@ async fn create_table(cfg: &Cfg, client: &BigqueryTableClient) -> Result<Table> 
                 string_field("status"),
                 string_field("service_name"),
                 string_field("tenant"),
-                TableFieldSchema {
-                    name: "cost".to_owned(),
-                    data_type: TableFieldType::String,
-                    ..Default::default()
-                },
+                string_field("cost"),
                 string_field("date"),
                 TableFieldSchema {
                     name: "number_of_days".to_owned(),
