@@ -1,6 +1,5 @@
 use std::{collections::HashMap, env, io::IsTerminal};
 
-use bigdecimal::{BigDecimal, FromPrimitive, Zero};
 use chrono::{DateTime, Datelike, NaiveDate, Utc};
 use color_eyre::eyre::{Result, anyhow, bail};
 use futures_util::future::try_join_all;
@@ -172,7 +171,7 @@ async fn get_rows_in_bigquery_table(
         let status = row.column::<String>(4)?;
         let service_name = row.column::<String>(5)?;
         let tenant = row.column::<String>(6)?;
-        let cost = row.column::<BigDecimal>(7)?;
+        let cost = row.column::<String>(7)?;
         let date = row.column::<String>(8)?;
         rows.push(BigQueryTableRowData {
             project_name,
@@ -390,12 +389,8 @@ fn transform(
     let mut bigquery_data_rows = Vec::new();
     for (tenant_env, kafka_instances) in &tenant_envs {
         for instance in kafka_instances {
-            let Some(num_teams) = f64::from_usize(instance.teams.len()) else {
-                bail!(
-                    "Unable to convert teams.len() to float: {}",
-                    instance.teams.len()
-                )
-            };
+            let num_teams = instance.teams.len() as f64;
+
             info!(
                 "calculating kafka cost for {} teams for {}/{}/{}",
                 instance.teams.len(),
@@ -403,6 +398,7 @@ fn transform(
                 tenant_env.environment,
                 instance.service_name
             );
+
             for (team_name, team_data_usage) in &instance.teams {
                 let half_base_cost = instance.base_cost / 2.0;
                 let team_divided_base_cost = half_base_cost / num_teams;
@@ -412,9 +408,7 @@ fn transform(
                 let storage_weighted_storage_cost =
                     team_divided_base_cost + (half_base_cost * storage_weight);
 
-                let cost =
-                    BigDecimal::from_f64(team_divided_base_cost + storage_weighted_storage_cost)
-                        .unwrap_or(BigDecimal::zero());
+                let cost = team_divided_base_cost + storage_weighted_storage_cost;
 
                 bigquery_data_rows.push(BigQueryTableRowData {
                     project_name: tenant_env.project_name.clone(),
@@ -424,7 +418,7 @@ fn transform(
                     status: instance.invoice_state.to_string(),
                     service_name: instance.service_name.clone(),
                     tenant: tenant_env.tenant.clone(),
-                    cost: cost.to_plain_string(),
+                    cost: cost.to_string(),
                     date: instance.year_month.clone(),
                     number_of_days: instance.days_in_month,
                 });
@@ -433,7 +427,7 @@ fn transform(
             // Not every Kafka instance has tiered storage, so we iterate separately
             // for the teams using it, calculate based on their tiered storage size
             let total_tiered_storage = instance.aggregate_data_usage.tiered_size;
-            if total_tiered_storage.is_zero() {
+            if total_tiered_storage == 0.0 {
                 continue;
             }
 
@@ -453,15 +447,12 @@ fn transform(
                 }
 
                 for (name, usage) in &instance.teams {
-                    if usage.tiered_size.is_zero() {
+                    if usage.tiered_size == 0.0 {
                         continue;
                     }
 
-                    let cost = BigDecimal::from_f64(
-                        tiered_storage_line.line_total_local
-                            * (usage.tiered_size / total_tiered_storage),
-                    )
-                    .unwrap_or(BigDecimal::zero());
+                    let cost = tiered_storage_line.line_total_local
+                        * (usage.tiered_size / total_tiered_storage);
 
                     info!("adding tiered storage cost for {}", name);
                     bigquery_data_rows.push(BigQueryTableRowData {
@@ -472,7 +463,7 @@ fn transform(
                         status: instance.invoice_state.to_string(),
                         service_name: instance.service_name.to_owned(),
                         tenant: tenant_env.tenant.to_owned(),
-                        cost: cost.to_plain_string(),
+                        cost: cost.to_string(),
                         date: year_month.clone(),
                         number_of_days: tiered_storage_line.timestamp_begin.num_days_in_month(),
                     });
