@@ -307,7 +307,7 @@ fn aggregate_topic_usage_by_team(
 ) -> Result<HashMap<TeamName, DataUsage>> {
     let mut usage_by_team: HashMap<String, DataUsage> = HashMap::new();
 
-    for topic in topics.iter() {
+    for topic in topics {
         let Some(team_name) = topic.name.split('.').next() else {
             bail!("Unable to find team name in topic name: '{}'", topic.name)
         };
@@ -406,7 +406,7 @@ fn transform(
                 let storage_weight =
                     team_data_usage.base_size / instance.aggregate_data_usage.base_size;
                 let storage_weighted_storage_cost =
-                    team_divided_base_cost + (half_base_cost * storage_weight);
+                    half_base_cost.mul_add(storage_weight, team_divided_base_cost);
 
                 let cost = team_divided_base_cost + storage_weighted_storage_cost;
 
@@ -456,13 +456,13 @@ fn transform(
 
                     info!("adding tiered storage cost for {}", name);
                     bigquery_data_rows.push(BigQueryTableRowData {
-                        project_name: tenant_env.project_name.to_owned(),
-                        environment: tenant_env.environment.to_owned(),
-                        team: name.to_owned(),
+                        project_name: tenant_env.project_name.clone(),
+                        environment: tenant_env.environment.clone(),
+                        team: name.clone(),
                         service: String::from("Kafka Tiered Storage"),
                         status: instance.invoice_state.to_string(),
-                        service_name: instance.service_name.to_owned(),
-                        tenant: tenant_env.tenant.to_owned(),
+                        service_name: instance.service_name.clone(),
+                        tenant: tenant_env.tenant.clone(),
                         cost: cost.to_string(),
                         date: year_month.clone(),
                         number_of_days: tiered_storage_line.timestamp_begin.num_days_in_month(),
