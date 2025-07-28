@@ -12,12 +12,18 @@ pub use self::kafka_instance::AivenApiKafka;
 pub use self::kafka_topic::AivenApiKafkaTopic;
 use crate::Cfg;
 
-#[derive(Debug, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum AivenInvoiceState {
     Paid,
     Mailed,
     Estimate,
+}
+
+impl Default for AivenInvoiceState {
+    fn default() -> Self {
+        Self::Mailed
+    }
 }
 
 impl Display for AivenInvoiceState {
@@ -100,21 +106,29 @@ where
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
-pub struct AivenApiKafkaInvoiceLine {
+pub struct AivenApiInvoiceLineTags {
+    #[serde(rename(deserialize = "billing:tenant"))]
+    pub tenant: String,
+    #[serde(rename(deserialize = "billing:environment"))]
+    pub environment: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct AivenApiInvoiceLine {
     #[serde(skip)]
     pub cost_type: KafkaInvoiceLineCostType,
     pub service_name: String,
     pub project_name: String,
-    pub invoice_id: String,
-    pub invoice_state: String,
+    pub invoice_state: AivenInvoiceState,
     #[serde(skip)]
     pub kafka_instance: AivenApiKafka,
     #[serde(deserialize_with = "string_to_f64")]
     pub line_total_local: f64,
     pub timestamp_begin: DateTime<Utc>,
+    pub tags: AivenApiInvoiceLineTags,
 }
 
-impl AivenApiKafkaInvoiceLine {
+impl AivenApiInvoiceLine {
     pub fn from_json_obj(obj: &serde_json::Value) -> Result<Self> {
         let mut result: Self = match serde_json::from_value(obj.clone()) {
             Ok(line) => line,
@@ -147,36 +161,26 @@ impl AivenApiKafkaInvoiceLine {
         reqwest_client: &reqwest::Client,
         cfg: &Cfg,
     ) -> Result<Self> {
-        self.kafka_instance
-            .populate_with_topics_from_aiven_api(reqwest_client, cfg)
-            .await?;
-        Ok(self)
-    }
-
-    pub async fn populate_with_tags_from_aiven_api(
-        &mut self,
-        reqwest_client: &reqwest::Client,
-        cfg: &Cfg,
-    ) -> Result<Self> {
-        info!(
-            "{}: getting tags for {} - {}",
-            self.invoice_id, self.project_name, self.service_name
-        );
-        self.kafka_instance = AivenApiKafka::from_aiven_api(
+        self.kafka_instance = AivenApiKafka::populate_from_aiven_api(
             reqwest_client,
             cfg,
             &self.project_name,
-            &self.invoice_state,
             &self.service_name,
         )
         .await?;
-        Ok(self.to_owned())
+        info!(
+            "Found {} topics for {}'s '{}' environment kafka instance '{}'",
+            self.kafka_instance.topics.len(),
+            self.tags.tenant,
+            self.tags.environment,
+            self.service_name
+        );
+        Ok(self)
     }
 
     pub async fn from_aiven_api(
         reqwest_client: &reqwest::Client,
         cfg: &Cfg,
-
         invoice_id: &str,
         invoice_state: &AivenInvoiceState,
     ) -> Result<Vec<Self>> {
@@ -234,37 +238,4 @@ impl AivenApiKafkaInvoiceLine {
 
         Self::from_json_list(&kafka_invoice_lines)
     }
-}
-
-pub async fn get_tags_of_aiven_service(
-    reqwest_client: &reqwest::Client,
-    cfg: &Cfg,
-    project_name: &str,
-    service_name: &str,
-) -> Result<Option<serde_json::Value>> {
-    let url =
-        format!("https://api.aiven.io/v1/project/{project_name}/service/{service_name}/tags",);
-    let response = reqwest_client
-        .get(&url)
-        .bearer_auth(&cfg.aiven_api_token)
-        .send()
-        .await?;
-    let response_status = &response.status();
-    let Ok(response_body) =
-        serde_json::from_str::<HashMap<String, serde_json::Value>>(&(response.text().await?))
-    else {
-        bail!("unable to parse json returned from: GET {response_status} {url}")
-    };
-
-    if response_status == &reqwest::StatusCode::NOT_FOUND {
-        info!("The Kafka instance {}, - does not exist", service_name);
-        // a 404 is not a failure here, it just means it didn't exist when we asked about it
-        // it could have been deleted previously but still exist on the invoice
-        return Ok(None);
-    }
-
-    let Some(response_tags) = response_body.get("tags") else {
-        bail!("missing field name:\n\t`tags`\n\t\tGET {response_status} {url}")
-    };
-    Ok(Some(response_tags.clone()))
 }

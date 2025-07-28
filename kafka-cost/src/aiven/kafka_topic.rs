@@ -36,7 +36,7 @@ pub struct AivenApiKafkaTopic {
     #[serde(skip)]
     pub partitions: Vec<AivenApiKafkaTopicPartition>,
 }
-fn tags_deserializer<'de, D>(deserializer: D) -> Result<HashMap<String, String>, D::Error>
+pub fn tags_deserializer<'de, D>(deserializer: D) -> Result<HashMap<String, String>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {

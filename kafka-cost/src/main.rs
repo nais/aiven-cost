@@ -22,7 +22,7 @@ use tracing_subscriber::{
 
 mod aiven;
 use crate::aiven::AivenApiKafkaTopic;
-use aiven::{AivenApiKafkaInvoiceLine, AivenInvoice, KafkaInvoiceLineCostType};
+use aiven::{AivenApiInvoiceLine, AivenInvoice, KafkaInvoiceLineCostType};
 
 pub fn init_tracing_subscriber() -> Result<()> {
     use tracing_subscriber::fmt as layer_fmt;
@@ -193,7 +193,7 @@ async fn extract(
     aiven_client: &reqwest::Client,
     cfg: &Cfg,
     date_of_latest_paid_invoice: &DateTime<Utc>,
-) -> Result<(Vec<AivenApiKafkaInvoiceLine>, Vec<AivenApiKafkaInvoiceLine>)> {
+) -> Result<(Vec<AivenApiInvoiceLine>, Vec<AivenApiInvoiceLine>)> {
     info!("Fetching invoices");
     let mut invoices: Vec<_> = AivenInvoice::from_aiven_api(aiven_client, cfg).await?;
     invoices.retain(|invoice| invoice.period_begin > *date_of_latest_paid_invoice);
@@ -204,9 +204,9 @@ async fn extract(
     );
 
     info!("Getting invoice lines for kakfa");
-    let mut kafka_invoice_lines: Vec<AivenApiKafkaInvoiceLine> =
+    let kafka_invoice_lines: Vec<AivenApiInvoiceLine> =
         try_join_all(invoices.iter().map(|invoice| {
-            AivenApiKafkaInvoiceLine::from_aiven_api(aiven_client, cfg, &invoice.id, &invoice.state)
+            AivenApiInvoiceLine::from_aiven_api(aiven_client, cfg, &invoice.id, &invoice.state)
         }))
         .await?
         .into_iter()
@@ -219,21 +219,10 @@ async fn extract(
         .cloned()
         .collect();
 
-    kafka_invoice_lines = try_join_all(
-        kafka_invoice_lines
-            .iter_mut()
-            .filter(|i| i.cost_type == KafkaInvoiceLineCostType::Base)
-            .map(|invoice_line| invoice_line.populate_with_tags_from_aiven_api(aiven_client, cfg)),
-    )
-    .await?
-    .into_iter()
-    .filter(|v| !v.kafka_instance.tenant.is_empty())
-    .collect::<Vec<AivenApiKafkaInvoiceLine>>();
-
     assert!(
-        &kafka_invoice_lines.iter().all(
-            |k| !k.kafka_instance.tenant.is_empty() && !k.kafka_instance.environment.is_empty()
-        ),
+        &kafka_invoice_lines
+            .iter()
+            .all(|k| !k.tags.tenant.is_empty() && !k.tags.environment.is_empty()),
         "Missing environment & tenant out of the`AivenTags` we set over at Aiven",
     );
     assert!(
@@ -340,24 +329,21 @@ fn aggregate_topic_usage_by_team(
 }
 
 fn transform(
-    kafka_base_cost_lines: &[AivenApiKafkaInvoiceLine],
-    kafka_tiered_storage_cost_lines: &[AivenApiKafkaInvoiceLine],
+    kafka_base_cost_lines: &[AivenApiInvoiceLine],
+    kafka_tiered_storage_cost_lines: &[AivenApiInvoiceLine],
 ) -> Result<Vec<BigQueryTableRowData>> {
     // We start by making collection of all tenants>envs>instances>teams, and their usage of Kafka
     let mut tenant_envs: HashMap<TenantEnv, Vec<KafkaInstance>> = HashMap::new();
     for line in kafka_base_cost_lines {
         // Get existing TenantEnv's HashMap of kafka instances if it exists
         let tenant_key = TenantEnv {
-            tenant: line.kafka_instance.tenant.clone(),
-            environment: line.kafka_instance.environment.clone(),
+            tenant: line.tags.tenant.clone(),
+            environment: line.tags.environment.clone(),
             project_name: line.project_name.clone(),
         };
         let kafka_instances = tenant_envs.entry(tenant_key).or_default();
 
-        info!(
-            "aggregating usage per team for {}",
-            &line.kafka_instance.service_name
-        );
+        info!("aggregating usage per team for {}", &line.service_name);
 
         let teams = aggregate_topic_usage_by_team(&line.kafka_instance.topics)?;
 
@@ -378,7 +364,7 @@ fn transform(
             service_name,
             aggregate_data_usage: agg,
             teams,
-            invoice_state: line.invoice_state.clone(),
+            invoice_state: line.invoice_state.to_string(),
             base_cost: line.line_total_local,
             year_month: line.timestamp_begin.format("%Y-%m").to_string(),
             days_in_month: line.timestamp_begin.num_days_in_month(),
