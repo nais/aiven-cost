@@ -461,31 +461,46 @@ fn transform(
         }
     }
 
-    let should_not_contain = [
+    // At this point, the `team` string for each BigQueryTableRowData
+    // should not contain, start with, or end with any of the below
+    //     It should just be the team name
+    let contains = [
         // Kafka streams join metadata
         "JOINTHIS",
         "JOINOTHER",
     ];
-    let should_not_start_with = [
+    let starts_with = [
         "__", // kafka connect meta topic, __connect_configs, __connect_offsets, __connect_status etc
     ];
-    let should_not_end_with = [
+    let ends_with = [
         // Kafka streams meta/internals
         "-repartition",
         "-changelog",
     ];
-
     // There are topic names this program did not correctly attribute to teams.
-    // Here's where we filter these topics (now team names at this stage in the program) out.
-    let cleaned_topics: Vec<_> = bigquery_data_rows
-        .into_iter()
-        .filter(|r| !should_not_contain.iter().any(|c| r.team.contains(c)))
-        .filter(|r| !should_not_start_with.iter().any(|c| r.team.starts_with(c)))
-        .filter(|r| !should_not_end_with.iter().any(|c| r.team.ends_with(c)))
+    let unwanted_topics: Vec<_> = bigquery_data_rows
+        .iter()
+        .filter(|r| {
+            contains.contains(&r.team.as_str())
+                || starts_with.iter().any(|c| r.team.starts_with(c))
+                || ends_with.iter().any(|c| r.team.ends_with(c))
+        })
+        .cloned()
         .collect();
-    info!("In total found {} teams", &cleaned_topics.len());
 
-    Ok(cleaned_topics)
+    // Here's where we keep the topics we want,
+    // AKA the topics whose names should only contain team names
+    let cleaned_teams: Vec<_> = bigquery_data_rows
+        .into_iter()
+        .filter(|t| !unwanted_topics.contains(t))
+        .collect();
+    info!(
+        "In total found {} teams found, {} teams filtered out",
+        &cleaned_teams.len(),
+        unwanted_topics.len()
+    );
+
+    Ok(cleaned_teams)
 }
 
 async fn load(cfg: &Cfg, client: &Client, rows: Vec<TeamKafkaTopicsUsage>) -> Result<()> {
