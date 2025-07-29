@@ -230,7 +230,7 @@ impl AivenApiInvoiceLine {
             .collect::<Result<Vec<_>>>()?;
 
         info!(
-            "invoice id {invoice_id} had {} line(s), of which {:?} were Kafka related",
+            "invoice id '{invoice_id}' had {} line(s), of which {:?} were Kafka related",
             &response_invoice_lines.len(),
             &kafka_invoice_lines.len()
         );

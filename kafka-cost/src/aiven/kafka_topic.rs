@@ -154,7 +154,7 @@ impl AivenApiKafkaTopic {
         };
 
         info!(
-            "Populating {} topics with partitions for {project_name} - {kafka_name}",
+            "Populating '{project_name}'s kafka({kafka_name}) {} topics' partitions",
             response_topics.len()
         );
 

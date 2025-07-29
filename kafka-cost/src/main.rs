@@ -341,13 +341,8 @@ fn transform(
             environment: line.tags.environment.clone(),
             project_name: line.project_name.clone(),
         };
-        let kafka_instances = tenant_envs.entry(tenant_key).or_default();
-
-        info!("aggregating usage per team for {}", &line.service_name);
 
         let teams = aggregate_topic_usage_by_team(&line.kafka_instance.topics)?;
-
-        let service_name = line.service_name.clone();
         let agg = teams.iter().fold(
             DataUsage {
                 base_size: 0.0,
@@ -358,8 +353,14 @@ fn transform(
                 tiered_size: acc.tiered_size + du.tiered_size,
             },
         );
-        info!("aggregated {:?}", agg);
+        info!(
+            "Kafka instance '{}' has an aggregate topic usage: {agg:?}",
+            &line.service_name
+        );
+
         // Insert data into collector variable
+        let service_name = line.service_name.clone();
+        let kafka_instances = tenant_envs.entry(tenant_key).or_default();
         kafka_instances.push(KafkaInstance {
             service_name,
             aggregate_data_usage: agg,
@@ -374,15 +375,18 @@ fn transform(
     // With the collection we can calcuate each teams usage of Kafka by their topics combined byte size
     let mut bigquery_data_rows = Vec::new();
     for (tenant_env, kafka_instances) in &tenant_envs {
+        info!(
+            "Iterating over {tenant_env:?}'s {} kafka instance(s)",
+            kafka_instances.len()
+        );
         for instance in kafka_instances {
             let num_teams = instance.teams.len() as f64;
 
             info!(
-                "calculating kafka cost for {} teams for {}/{}/{}",
+                "Calculating kafka instance '{}'s cost w/status '{}' for {} team(s)",
+                instance.service_name,
+                instance.invoice_state,
                 instance.teams.len(),
-                tenant_env.tenant,
-                tenant_env.environment,
-                instance.service_name
             );
 
             for (team_name, team_data_usage) in &instance.teams {
@@ -440,7 +444,6 @@ fn transform(
                     let cost = tiered_storage_line.line_total_local
                         * (usage.tiered_size / total_tiered_storage);
 
-                    info!("adding tiered storage cost for {}", name);
                     bigquery_data_rows.push(TeamKafkaTopicsUsage {
                         project_name: tenant_env.project_name.clone(),
                         environment: tenant_env.environment.clone(),
@@ -480,6 +483,7 @@ fn transform(
         .filter(|r| !should_not_start_with.iter().any(|c| r.team.starts_with(c)))
         .filter(|r| !should_not_end_with.iter().any(|c| r.team.ends_with(c)))
         .collect();
+    info!("In total found {} teams", &cleaned_topics.len());
 
     Ok(cleaned_topics)
 }
