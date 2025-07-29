@@ -105,7 +105,7 @@ async fn main() -> Result<()> {
 
     let (config, _) = ClientConfig::new_with_auth().await?;
     let bigquery_client = Client::new(config).await?;
-    let paid_invoices: Vec<BigQueryTableRowData> =
+    let paid_invoices: Vec<TeamKafkaTopicsUsage> =
         get_rows_in_bigquery_table(&cfg, &bigquery_client)
             .await?
             .into_iter()
@@ -145,7 +145,7 @@ async fn main() -> Result<()> {
 async fn get_rows_in_bigquery_table(
     cfg: &Cfg,
     bigquery_client: &Client,
-) -> Result<Vec<BigQueryTableRowData>> {
+) -> Result<Vec<TeamKafkaTopicsUsage>> {
     info!("Fetching rows from BigQuery table: {}", cfg.bigquery_table);
     let table_reference = gcloud_bigquery::http::table::TableReference {
         project_id: cfg.bigquery_project_id.clone(),
@@ -173,7 +173,7 @@ async fn get_rows_in_bigquery_table(
         let tenant = row.column::<String>(6)?;
         let cost = row.column::<String>(7)?;
         let date = row.column::<String>(8)?;
-        rows.push(BigQueryTableRowData {
+        rows.push(TeamKafkaTopicsUsage {
             project_name,
             environment,
             team,
@@ -278,7 +278,7 @@ struct DataUsage {
 }
 
 #[derive(Serialize, Debug, Default, PartialEq, Eq, Clone)]
-struct BigQueryTableRowData {
+struct TeamKafkaTopicsUsage {
     project_name: String,
     environment: String,
     team: String,
@@ -331,7 +331,7 @@ fn aggregate_topic_usage_by_team(
 fn transform(
     kafka_base_cost_lines: &[AivenApiInvoiceLine],
     kafka_tiered_storage_cost_lines: &[AivenApiInvoiceLine],
-) -> Result<Vec<BigQueryTableRowData>> {
+) -> Result<Vec<TeamKafkaTopicsUsage>> {
     // We start by making collection of all tenants>envs>instances>teams, and their usage of Kafka
     let mut tenant_envs: HashMap<TenantEnv, Vec<KafkaInstance>> = HashMap::new();
     for line in kafka_base_cost_lines {
@@ -396,7 +396,7 @@ fn transform(
 
                 let cost = team_divided_base_cost + storage_weighted_storage_cost;
 
-                bigquery_data_rows.push(BigQueryTableRowData {
+                bigquery_data_rows.push(TeamKafkaTopicsUsage {
                     project_name: tenant_env.project_name.clone(),
                     environment: tenant_env.environment.clone(),
                     team: team_name.clone(),
@@ -441,7 +441,7 @@ fn transform(
                         * (usage.tiered_size / total_tiered_storage);
 
                     info!("adding tiered storage cost for {}", name);
-                    bigquery_data_rows.push(BigQueryTableRowData {
+                    bigquery_data_rows.push(TeamKafkaTopicsUsage {
                         project_name: tenant_env.project_name.clone(),
                         environment: tenant_env.environment.clone(),
                         team: name.clone(),
@@ -484,8 +484,8 @@ fn transform(
     Ok(cleaned_topics)
 }
 
-async fn load(cfg: &Cfg, client: &Client, rows: Vec<BigQueryTableRowData>) -> Result<()> {
-    let actual_rows: Vec<Row<BigQueryTableRowData>> = rows
+async fn load(cfg: &Cfg, client: &Client, rows: Vec<TeamKafkaTopicsUsage>) -> Result<()> {
+    let actual_rows: Vec<Row<TeamKafkaTopicsUsage>> = rows
         .into_iter()
         .map(|r| Row {
             insert_id: None,

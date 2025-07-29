@@ -227,7 +227,6 @@ impl AivenApiInvoiceLine {
 
                 Ok(json)
             })
-            // .cloned()
             .collect::<Result<Vec<_>>>()?;
 
         info!(
