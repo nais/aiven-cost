@@ -494,11 +494,10 @@ fn transform(
         .into_iter()
         .filter(|t| !unwanted_topics.contains(t))
         .collect();
-    info!(
-        "In total found {} teams found, {} teams filtered out",
-        &cleaned_teams.len(),
-        unwanted_topics.len()
-    );
+    info!("Found {} teams with topics", &cleaned_teams.len());
+    if unwanted_topics.len() > 0 {
+        info!("Topics we were not able to assign: {unwanted_topics:?}");
+    }
 
     Ok(cleaned_teams)
 }
