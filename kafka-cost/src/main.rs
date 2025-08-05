@@ -1,7 +1,7 @@
 use std::{collections::HashMap, env, io::IsTerminal};
 
 use chrono::{DateTime, Datelike, NaiveDate, Utc};
-use color_eyre::eyre::{Result, anyhow, bail};
+use color_eyre::eyre::{Context, Result, anyhow, bail};
 use futures_util::future::try_join_all;
 use gcloud_bigquery::{
     client::{Client, ClientConfig},
@@ -103,7 +103,9 @@ async fn main() -> Result<()> {
     let cfg = Cfg::new();
     let aiven_client = client()?;
 
-    let (config, _) = ClientConfig::new_with_auth().await?;
+    let (config, _) = ClientConfig::new_with_auth()
+        .await
+        .wrap_err_with(|| format!("Failed to get GCP credentials"))?;
     let bigquery_client = Client::new(config).await?;
     let paid_invoices: Vec<TeamKafkaTopicsUsage> =
         get_rows_in_bigquery_table(&cfg, &bigquery_client)
