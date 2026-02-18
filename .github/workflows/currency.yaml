@@ -1,8 +1,12 @@
-name: Build, push and deploy aiven-cost
+name: Build, push and deploy currency
 on:
   push:
-    paths-ignore:
-      - "kafka-cost/**"
+    paths:
+      - ".github/workflows/currency.yaml"
+      - ".nais/currency.yaml"
+      - "cmd/currency/**"
+      - "internal/**"
+      - "currency.Dockerfile"
     branches:
       - main
 
@@ -14,8 +18,8 @@ jobs:
     outputs:
       tags: ${{ steps.metadata.outputs.tags }}
     permissions:
-      contents: read
-      id-token: write
+      contents: "read"
+      id-token: "write"
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -25,8 +29,8 @@ jobs:
         uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed # ratchet:google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ secrets.NAIS_IO_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: gh-aiven-cost@nais-io.iam.gserviceaccount.com
-          token_format: access_token
+          service_account: "gh-aiven-cost@nais-io.iam.gserviceaccount.com"
+          token_format: "access_token"
       - name: Set up Docker Buildx
         id: buildx
         uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # ratchet:docker/setup-buildx-action@v3
@@ -34,13 +38,14 @@ jobs:
         uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # ratchet:docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
-          username: oauth2accesstoken
-          password: ${{ steps.auth.outputs.access_token }}
+          username: "oauth2accesstoken"
+          password: "${{ steps.auth.outputs.access_token }}"
       - name: Docker meta
         id: metadata
         uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # ratchet:docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/aiven-cost
+          images: ${{ env.REGISTRY }}/currency
+          # Docker tags based on the following events/attributes
           tags: |
             type=schedule
             type=ref,event=branch
@@ -49,42 +54,42 @@ jobs:
             type=semver,pattern=v{{major}}.{{minor}}
             type=semver,pattern=v{{major}}
             type=sha
-      - name: Build and push aiven-cost
+      - name: Build and push currency
         uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # ratchet:docker/build-push-action@v5
         with:
           context: .
-          file: aiven-cost.Dockerfile
+          file: currency.Dockerfile
           push: true
           tags: ${{ steps.metadata.outputs.tags }}
           labels: ${{ steps.metadata.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-  deploy_aiven-cost:
+  deploy_currency:
     if: github.ref == 'refs/heads/main'
-    runs-on: [fasit-deploy]
-    needs: [build_and_push]
+    runs-on: ["fasit-deploy"]
+    needs: ["build_and_push"]
     permissions:
-      contents: read
-      id-token: write
+      contents: "read"
+      id-token: "write"
     steps:
       - name: Checkout aiven-cost
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # ratchet:actions/checkout@v4
-      - id: auth
+      - id: "auth"
         name: Authenticate to Google Cloud
         uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed # ratchet:google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ secrets.NAIS_IO_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: gh-aiven-cost@nais-io.iam.gserviceaccount.com
-          token_format: access_token
+          service_account: "gh-aiven-cost@nais-io.iam.gserviceaccount.com"
+          token_format: "access_token"
       - name: Get credentials
         shell: bash
         run: |
           gcloud container clusters get-credentials nais-io --project nais-io --region europe-north1
-      - name: deploy aiven-cost
+      - name: deploy currency
         env:
-          AIVEN_API_TOKEN: ${{ secrets.AIVEN_TOKEN }}
+          CURRENCY_TOKEN: ${{ secrets.CURRENCY_TOKEN }}
         shell: bash
         run: |
           IMAGE_TAG=${GITHUB_SHA:0:7}
-          kubectl -n nais-system create secret generic aiven-cost --from-literal=AIVEN_API_TOKEN=$AIVEN_API_TOKEN --dry-run=client -o yaml | kubectl apply -f -
-          sed "s|IMAGE_TAG|${IMAGE_TAG}|g" ./.nais/aiven-cost.yaml | kubectl apply -f -
+          kubectl -n nais-system create secret generic currency --from-literal=CURRENCY_TOKEN=$CURRENCY_TOKEN --dry-run=client -o yaml | kubectl apply -f -
+          sed "s|IMAGE_TAG|${IMAGE_TAG}|g" ./.nais/currency.yaml | kubectl apply -f -
