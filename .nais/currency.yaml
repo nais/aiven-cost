@@ -20,6 +20,9 @@ spec:
           - image: europe-north1-docker.pkg.dev/nais-io/nais/images/currency:sha-IMAGE_TAG
             imagePullPolicy: Always
             name: currency
+              env:
+                - name: LOG_FORMAT
+                  value: json
             envFrom:
               - secretRef:
                   name: currency
