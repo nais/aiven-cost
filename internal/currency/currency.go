@@ -17,7 +17,7 @@ type Client struct {
 
 func New(apiToken string) *Client {
 	return &Client{
-		client:   http.DefaultClient,
+		client:   &http.Client{Timeout: 30 * time.Second},
 		apiURL:   "https://api.apilayer.com/exchangerates_data",
 		apiToken: apiToken,
 	}

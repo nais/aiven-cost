@@ -30,7 +30,7 @@ func New(apiHost, token, orgID, billingGroupID string, logger *logrus.Logger) (*
 		return nil, err
 	}
 	return &Client{
-		client:         http.DefaultClient,
+		client:         &http.Client{Timeout: 30 * time.Second},
 		aivenClient:    client,
 		apiHost:        apiHost,
 		apiToken:       token,
