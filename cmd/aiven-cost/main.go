@@ -44,7 +44,7 @@ func main() {
 func run(cfg *config.Config, logger *logrus.Logger) error {
 	ctx := context.Background()
 
-	aivenClient, err := aiven.New(cfg.Aiven.ApiHost, cfg.Aiven.Token, cfg.Aiven.BillingGroupID, logger)
+	aivenClient, err := aiven.New(cfg.Aiven.ApiHost, cfg.Aiven.Token, cfg.Aiven.OrgID, cfg.Aiven.BillingGroupID, logger)
 	if err != nil {
 		return fmt.Errorf("failed to create client: %w", err)
 	}

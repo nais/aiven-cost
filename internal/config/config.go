@@ -14,6 +14,9 @@ type Aiven struct {
 
 	// BillingGroupID is the ID for the Aiven billing group
 	BillingGroupID string `envconfig:"AIVEN_BILLING_GROUP_ID" default:""`
+
+	// OrgID is the ID for the Aiven organization, starts with org
+	OrgID string `envconfig:"AIVEN_ORG_ID" default""`
 }
 
 // Log configuration
