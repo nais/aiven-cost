@@ -4,3 +4,4 @@ aiven-cost.log
 /bin
 result*
 /.direnv
+.agent-shell/
