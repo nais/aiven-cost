@@ -112,7 +112,7 @@ func (c *Client) doAivenGet(ctx context.Context, path string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Authorization", "aivenv1 "+c.apiToken)
+	req.Header.Set("Authorization", "Bearer "+c.apiToken)
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.client.Do(req)
