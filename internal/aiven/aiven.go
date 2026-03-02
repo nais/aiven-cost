@@ -41,21 +41,20 @@ func New(apiHost, token, orgID, billingGroupID string, logger *logrus.Logger) (*
 }
 
 func (c *Client) GetInvoices(ctx context.Context) ([]Invoice, error) {
-	invoices := struct {
-		Invoices []Invoice `json:"invoices"`
-	}{}
-	aivenInvoices, err := c.aivenClient.BillingGroupInvoiceList(ctx, c.billingGroupID)
+	path := fmt.Sprintf("/v1/organization/%s/invoices", c.orgID)
+	body, err := c.doAivenGet(ctx, path)
 	if err != nil {
 		return nil, err
 	}
-	for _, aivenInvoice := range aivenInvoices {
-		invoices.Invoices = append(invoices.Invoices, Invoice{
-			InvoiceId:   aivenInvoice.InvoiceNumber,
-			TotalIncVat: aivenInvoice.TotalIncVat,
-			Status:      string(aivenInvoice.State),
-		})
+
+	var out struct {
+		Invoices []Invoice `json:"invoices"`
 	}
-	return invoices.Invoices, nil
+	if err := json.Unmarshal(body, &out); err != nil {
+		return nil, err
+	}
+
+	return out.Invoices, nil
 }
 
 func parseServiceType(lineType, serviceType string) string {
