@@ -57,7 +57,7 @@ func (c *Client) GetInvoices(ctx context.Context) ([]Invoice, error) {
 	return out.Invoices, nil
 }
 
-func parseServiceType(lineType, serviceType string) string {
+func ParseServiceType(lineType, serviceType string) string {
 	switch lineType {
 	case "support_charge", "extra_charge":
 		return "support"
@@ -69,20 +69,24 @@ func parseServiceType(lineType, serviceType string) string {
 	}
 }
 
-func parseTenant(tenant string) string {
+func ParseTenant(tenant string) string {
 	if tenant == "" {
 		return "nav"
 	}
 	return tenant
 }
 
-func parseTeam(team, serviceType string) string {
+func ParseTeam(team, serviceType string) string {
 	switch serviceType {
 	case "kafka", "support_charge", "extra_charge", "credit_consumption":
 		return "nais"
 	default:
 		return team
 	}
+}
+
+func AmountOfDaysInMonth(m time.Month, year int) int {
+	return time.Date(year, m+1, 0, 0, 0, 0, 0, time.UTC).Day()
 }
 
 type orgInvoiceLinesResponse struct {
@@ -181,24 +185,20 @@ func (c *Client) GetInvoiceLines(ctx context.Context, invoice Invoice) ([]bigque
 			InvoiceId:      invoice.InvoiceId,
 			ProjectName:    line.ProjectID,
 			Environment:    tags.Environment,
-			Team:           parseTeam(tags.Team, line.ServiceType),
-			Service:        parseServiceType(line.LineType, line.ServiceType),
+			Team:           ParseTeam(tags.Team, line.ServiceType),
+			Service:        ParseServiceType(line.LineType, line.ServiceType),
 			ServiceName:    line.ServiceID,
-			Tenant:         parseTenant(tags.Tenant),
+			Tenant:         ParseTenant(tags.Tenant),
 			Status:         invoice.Status,
 			Cost:           line.Total,
 			Currency:       line.Currency,
 			Date:           fmt.Sprintf("%02d-%02d", timestampBegin.Year(), timestampBegin.Month()),
-			NumberOfDays:   amountOfDaysInMonth(timestampBegin.Month(), timestampBegin.Year()),
+			NumberOfDays:   AmountOfDaysInMonth(timestampBegin.Month(), timestampBegin.Year()),
 		})
 
 	}
 
 	return ret, nil
-}
-
-func amountOfDaysInMonth(m time.Month, year int) int {
-	return time.Date(year, m+1, 0, 0, 0, 0, 0, time.UTC).Day()
 }
 
 func (c *Client) GetServiceTags(ctx context.Context, projectName, serviceName string) (Tags, error) {

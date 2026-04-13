@@ -9,6 +9,29 @@ import (
 	"google.golang.org/api/iterator"
 )
 
+func (c *Client) FetchDistinctDates(ctx context.Context) (map[string]struct{}, error) {
+	q := c.client.Query(`SELECT DISTINCT date FROM ` + c.client.Project() + "." + c.dataset + "." + c.costItemsTable)
+	it, err := q.Read(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch distinct dates: %w", err)
+	}
+	dates := make(map[string]struct{})
+	for {
+		var values []bigquery.Value
+		err := it.Next(&values)
+		if errors.Is(err, iterator.Done) {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("failed to read distinct dates: %w", err)
+		}
+		if len(values) > 0 {
+			dates[values[0].(string)] = struct{}{}
+		}
+	}
+	return dates, nil
+}
+
 func (c *Client) FetchCostItemIDAndStatus(ctx context.Context) (map[string]string, error) {
 	q := c.client.Query(`SELECT DISTINCT invoice_id, status FROM ` + c.client.Project() + "." + c.dataset + "." + c.costItemsTable)
 	it, err := q.Read(ctx)
