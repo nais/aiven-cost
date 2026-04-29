@@ -1,0 +1,5 @@
+[tools]
+go = "1.26.2"
+
+[settings]
+pin = true
