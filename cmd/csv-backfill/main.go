@@ -49,7 +49,7 @@ func main() {
 	fromStr := flag.String("from", "", "start of missing-month range, format YYYY-MM (default: January of current year)")
 	toStr := flag.String("to", "", "end of missing-month range, format YYYY-MM (default: current month)")
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: csv-backfill [--dry-run] [--from YYYY-MM] [--to YYYY-MM] <file.csv> [...]\n\n")
+		_, _ = fmt.Fprintf(os.Stderr, "Usage: csv-backfill [--dry-run] [--from YYYY-MM] [--to YYYY-MM] <file.csv> [...]\n\n")
 		flag.PrintDefaults()
 	}
 	flag.Parse()
@@ -64,13 +64,13 @@ func main() {
 
 	from, err := parseYearMonth(*fromStr, time.Date(now.Year(), time.January, 1, 0, 0, 0, 0, time.UTC))
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "invalid --from value: %v\n", err)
+		_, _ = fmt.Fprintf(os.Stderr, "invalid --from value: %v\n", err)
 		os.Exit(exitCodeUsageError)
 	}
 
 	to, err := parseYearMonth(*toStr, time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC))
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "invalid --to value: %v\n", err)
+		_, _ = fmt.Fprintf(os.Stderr, "invalid --to value: %v\n", err)
 		os.Exit(exitCodeUsageError)
 	}
 
@@ -94,7 +94,7 @@ func main() {
 	os.Exit(exitCodeOK)
 }
 
-func run(cfg *config.Config, logger *logrus.Logger, csvFiles []string, from, to time.Time, dryRun bool) error {
+func run(cfg *config.Config, logger logrus.FieldLogger, csvFiles []string, from, to time.Time, dryRun bool) error {
 	ctx := context.Background()
 
 	bqClient, err := bigquery.New(ctx, cfg.BigQuery.ProjectID, cfg.BigQuery.Dataset, cfg.BigQuery.CostItemsTable, cfg.BigQuery.CurrencyTable)
@@ -206,14 +206,26 @@ func run(cfg *config.Config, logger *logrus.Logger, csvFiles []string, from, to 
 	return nil
 }
 
+func closeWithLog(c io.Closer, logger logrus.FieldLogger) {
+	if err := c.Close(); err != nil {
+		logger.WithError(err).Error("unable to close reader")
+	}
+}
+
 // parseCSV reads a CSV file and returns BigQuery lines for rows whose month is in missingSet.
 // Rows with an empty service_type are skipped (discount/commitment lines).
-func parseCSV(path, invoiceID, billingGroupID string, missingSet map[string]struct{}, logger *logrus.Logger) ([]bigquery.Line, error) {
-	f, err := os.Open(path)
+func parseCSV(path, invoiceID, billingGroupID string, missingSet map[string]struct{}, logger logrus.FieldLogger) ([]bigquery.Line, error) {
+	root, err := os.OpenRoot(filepath.Dir(path))
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer closeWithLog(root, logger)
+
+	f, err := root.Open(filepath.Base(path))
+	if err != nil {
+		return nil, err
+	}
+	defer closeWithLog(f, logger)
 
 	r := csv.NewReader(f)
 	// Read and discard header row
