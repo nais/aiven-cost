@@ -17,7 +17,7 @@ require (
 	github.com/kelseyhightower/envconfig v1.4.0
 	github.com/sirupsen/logrus v1.9.4
 	golang.org/x/vuln v1.3.0
-	google.golang.org/api v0.276.0
+	google.golang.org/api v0.277.0
 	honnef.co/go/tools v0.7.0
 	mvdan.cc/gofumpt v0.9.2
 )
