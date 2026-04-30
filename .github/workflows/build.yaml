@@ -70,7 +70,7 @@ jobs:
           name: ${{ matrix.app }}-version
           path: version.txt
   deploy:
-    if: github.ref == 'refs/heads/main'
+    # if: github.ref == 'refs/heads/main'
     needs: [build]
     strategy:
       matrix:
