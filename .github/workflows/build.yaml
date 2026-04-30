@@ -10,6 +10,15 @@ concurrency:
 permissions:
   contents: read
 jobs:
+  go-version:
+    outputs:
+      go-version: ${{ steps.go-version.outputs.go-version }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # ratchet:actions/checkout@v6
+      - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # ratchet:jdx/mise-action@v4
+      - id: go-version
+        run: echo "go-version=$(mise current go)" >> $GITHUB_OUTPUT
   checks:
     strategy:
       matrix:
@@ -34,3 +43,43 @@ jobs:
       - if: ${{ needs.checks.result != 'success' }}
         run: exit 1
       - run: echo "All checks and builds passed."
+  build-aiven-cost:
+    needs: [ go-version, branch-protection-checkpoint ]
+    outputs:
+      aiven-cost-version: ${{ steps.build-push-sign.outputs.version }}
+    permissions:
+      contents: read
+      id-token: write
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # ratchet:actions/checkout@v6
+      - uses: nais/platform-build-push-sign@df590279b21bc5978519685752f9eaddd546043c # ratchet:nais/platform-build-push-sign@main
+        id: build-push-sign
+        with:
+          dockerfile: aiven-cost.Dockerfile
+          name: aiven-cost
+          google_service_account: gh-aiven-cost
+          workload_identity_provider: ${{ secrets.NAIS_IO_WORKLOAD_IDENTITY_PROVIDER }}
+          push: false # TODO: Change to: ${{ github.actor != 'dependabot[bot]' }}
+          build_args: |
+            GO_VERSION=${{ steps.go-version.outputs.go-version }}
+  build-currency:
+    needs: [ go-version, branch-protection-checkpoint ]
+    outputs:
+      version: ${{ steps.build-push-sign.outputs.version }}
+    permissions:
+      contents: read
+      id-token: write
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # ratchet:actions/checkout@v6
+      - uses: nais/platform-build-push-sign@df590279b21bc5978519685752f9eaddd546043c # ratchet:nais/platform-build-push-sign@main
+        id: build-push-sign
+        with:
+          dockerfile: currency.Dockerfile
+          name: currency
+          google_service_account: gh-aiven-cost
+          workload_identity_provider: ${{ secrets.NAIS_IO_WORKLOAD_IDENTITY_PROVIDER }}
+          push: false # TODO: Change to: ${{ github.actor != 'dependabot[bot]' }}
+          build_args: |
+            GO_VERSION=${{ steps.go-version.outputs.go-version }}
