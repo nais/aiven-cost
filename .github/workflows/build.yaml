@@ -62,7 +62,7 @@ jobs:
           workload_identity_provider: ${{ secrets.NAIS_IO_WORKLOAD_IDENTITY_PROVIDER }}
           push: false # TODO: Change to: ${{ github.actor != 'dependabot[bot]' }}
           build_args: |
-            GO_VERSION=${{ steps.go-version.outputs.go-version }}
+            GO_VERSION=${{ needs.go-version.outputs.go-version }}
   build-currency:
     needs: [ go-version, branch-protection-checkpoint ]
     outputs:
@@ -82,4 +82,4 @@ jobs:
           workload_identity_provider: ${{ secrets.NAIS_IO_WORKLOAD_IDENTITY_PROVIDER }}
           push: false # TODO: Change to: ${{ github.actor != 'dependabot[bot]' }}
           build_args: |
-            GO_VERSION=${{ steps.go-version.outputs.go-version }}
+            GO_VERSION=${{ needs.go-version.outputs.go-version }}
