@@ -61,20 +61,16 @@ jobs:
           name: ${{ matrix.app }}
           google_service_account: gh-aiven-cost
           workload_identity_provider: ${{ secrets.NAIS_IO_WORKLOAD_IDENTITY_PROVIDER }}
-          push: false # TODO: Change to: ${{ github.actor != 'dependabot[bot]' }}
-          build_args: |
-            GO_VERSION=${{ needs.go-version.outputs.go-version }}
+          push: ${{ github.actor != 'dependabot[bot]' }}
+          build_args: GO_VERSION=${{ needs.go-version.outputs.go-version }}
       - run: echo "${{ steps.build-push-sign.outputs.version }}" > version.txt
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # ratchet:actions/upload-artifact@v7
         with:
           name: ${{ matrix.app }}-version
           path: version.txt
-  deploy:
-    # if: github.ref == 'refs/heads/main'
+  deploy-aiven-cost:
+    if: github.ref == 'refs/heads/main'
     needs: [build]
-    strategy:
-      matrix:
-        app: [aiven-cost, currency]
     permissions:
       contents: read
       id-token: write
@@ -83,7 +79,49 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # ratchet:actions/checkout@v6
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # ratchet:actions/download-artifact@v8
         with:
-          name: ${{ matrix.app }}-version
+          name: aiven-cost-version
       - id: version
         run: echo "version=$(cat version.txt)" >> $GITHUB_OUTPUT
-      - run: echo "Deploying ${{ matrix.app }} version ${{ steps.version.outputs.version }}..."
+      - id: auth
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # ratchet:google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ secrets.NAIS_IO_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: gh-aiven-cost@nais-io.iam.gserviceaccount.com
+          token_format: access_token
+      - shell: bash
+        run: gcloud container clusters get-credentials nais-io --project nais-io --region europe-north1
+      - env:
+          AIVEN_API_TOKEN: ${{ secrets.AIVEN_TOKEN }}
+          AIVEN_ORG_ID: ${{ secrets.AIVEN_ORG_ID }}
+        shell: bash
+        run: |
+          kubectl -n nais-system create secret generic aiven-cost --from-literal=AIVEN_API_TOKEN=$AIVEN_API_TOKEN --from-literal=AIVEN_ORG_ID=$AIVEN_ORG_ID --dry-run=client -o yaml | kubectl apply -f -
+          sed "s|IMAGE_TAG|${{ steps.version.outputs.version }}|g" ./.nais/aiven-cost.yaml | kubectl apply -f -
+  deploy-currency:
+    if: github.ref == 'refs/heads/main'
+    needs: [build]
+    permissions:
+      contents: read
+      id-token: write
+    runs-on: [fasit-deploy]
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # ratchet:actions/checkout@v6
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # ratchet:actions/download-artifact@v8
+        with:
+          name: currency-version
+      - id: version
+        run: echo "version=$(cat version.txt)" >> $GITHUB_OUTPUT
+      - id: auth
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # ratchet:google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ secrets.NAIS_IO_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: gh-aiven-cost@nais-io.iam.gserviceaccount.com
+          token_format: access_token
+      - shell: bash
+        run: gcloud container clusters get-credentials nais-io --project nais-io --region europe-north1
+      - env:
+          CURRENCY_TOKEN: ${{ secrets.CURRENCY_TOKEN }}
+        shell: bash
+        run: |
+          kubectl -n nais-system create secret generic currency --from-literal=CURRENCY_TOKEN=$CURRENCY_TOKEN --dry-run=client -o yaml | kubectl apply -f -
+          sed "s|IMAGE_TAG|${{ steps.version.outputs.version }}|g" ./.nais/currency.yaml | kubectl apply -f -
