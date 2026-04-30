@@ -43,10 +43,11 @@ jobs:
       - if: ${{ needs.checks.result != 'success' }}
         run: exit 1
       - run: echo "All checks and builds passed."
-  build-aiven-cost:
-    needs: [ go-version, branch-protection-checkpoint ]
-    outputs:
-      aiven-cost-version: ${{ steps.build-push-sign.outputs.version }}
+  build:
+    needs: [go-version, branch-protection-checkpoint]
+    strategy:
+      matrix:
+        app: [aiven-cost, currency]
     permissions:
       contents: read
       id-token: write
@@ -56,30 +57,33 @@ jobs:
       - uses: nais/platform-build-push-sign@df590279b21bc5978519685752f9eaddd546043c # ratchet:nais/platform-build-push-sign@main
         id: build-push-sign
         with:
-          dockerfile: aiven-cost.Dockerfile
-          name: aiven-cost
+          dockerfile: ${{ matrix.app }}.Dockerfile
+          name: ${{ matrix.app }}
           google_service_account: gh-aiven-cost
           workload_identity_provider: ${{ secrets.NAIS_IO_WORKLOAD_IDENTITY_PROVIDER }}
           push: false # TODO: Change to: ${{ github.actor != 'dependabot[bot]' }}
           build_args: |
             GO_VERSION=${{ needs.go-version.outputs.go-version }}
-  build-currency:
-    needs: [ go-version, branch-protection-checkpoint ]
-    outputs:
-      version: ${{ steps.build-push-sign.outputs.version }}
+      - run: echo "${{ steps.build-push-sign.outputs.version }}" > version.txt
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # ratchet:actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.app }}-version
+          path: version.txt
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    needs: [build]
+    strategy:
+      matrix:
+        app: [aiven-cost, currency]
     permissions:
       contents: read
       id-token: write
-    runs-on: ubuntu-latest
+    runs-on: [fasit-deploy]
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # ratchet:actions/checkout@v6
-      - uses: nais/platform-build-push-sign@df590279b21bc5978519685752f9eaddd546043c # ratchet:nais/platform-build-push-sign@main
-        id: build-push-sign
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # ratchet:actions/download-artifact@v8
         with:
-          dockerfile: currency.Dockerfile
-          name: currency
-          google_service_account: gh-aiven-cost
-          workload_identity_provider: ${{ secrets.NAIS_IO_WORKLOAD_IDENTITY_PROVIDER }}
-          push: false # TODO: Change to: ${{ github.actor != 'dependabot[bot]' }}
-          build_args: |
-            GO_VERSION=${{ needs.go-version.outputs.go-version }}
+          name: ${{ matrix.app }}-version
+      - id: version
+        run: echo "version=$(cat version.txt)" >> $GITHUB_OUTPUT
+      - run: echo "Deploying ${{ matrix.app }} version ${{ steps.version.outputs.version }}..."
