@@ -76,7 +76,7 @@ fn client() -> Result<reqwest::Client> {
 #[derive(Debug, Clone)]
 pub struct Cfg {
     pub aiven_api_token: String,
-    pub billing_group_id: String,
+    pub org_id: String,
     pub bigquery_project_id: String,
     pub bigquery_dataset: String,
     pub bigquery_table: String,
@@ -87,7 +87,7 @@ impl Cfg {
         Self {
             // Aiven stuff
             aiven_api_token: std::env::var("AIVEN_API_TOKEN").expect("api token"),
-            billing_group_id: "7d14362d-1e2a-4864-b408-1cc631bc4fab".into(),
+            org_id: std::env::var("AIVEN_ORG_ID").expect("AIVEN_ORG_ID env var"),
             // BQ stuff
             bigquery_project_id: "nais-io".into(),
             bigquery_dataset: "aiven_cost_regional".into(),

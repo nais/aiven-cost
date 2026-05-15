@@ -63,8 +63,8 @@ impl AivenInvoice {
 
     pub async fn from_aiven_api(aiven_client: &reqwest::Client, cfg: &Cfg) -> Result<Vec<Self>> {
         let url = format!(
-            "https://api.aiven.io/v1/billing-group/{}/invoice",
-            cfg.billing_group_id
+            "https://api.aiven.io/v1/organization/{}/invoices",
+            cfg.org_id
         );
         let response = aiven_client
             .get(&url)
@@ -117,13 +117,16 @@ pub struct AivenApiInvoiceLineTags {
 pub struct AivenApiInvoiceLine {
     #[serde(skip)]
     pub cost_type: KafkaInvoiceLineCostType,
+    #[serde(rename(deserialize = "service_id"))]
     pub service_name: String,
+    #[serde(rename(deserialize = "project_id"))]
     pub project_name: String,
     pub invoice_state: AivenInvoiceState,
     #[serde(skip)]
     pub kafka_instance: AivenApiKafka,
-    #[serde(deserialize_with = "string_to_f64")]
+    #[serde(rename(deserialize = "total"), deserialize_with = "string_to_f64")]
     pub line_total_local: f64,
+    #[serde(rename(deserialize = "begin_time"))]
     pub timestamp_begin: DateTime<Utc>,
     pub tags: AivenApiInvoiceLineTags,
 }
@@ -185,8 +188,8 @@ impl AivenApiInvoiceLine {
         invoice_state: &AivenInvoiceState,
     ) -> Result<Vec<Self>> {
         let url = format!(
-            "https://api.aiven.io/v1/billing-group/{}/invoice/{}/lines",
-            cfg.billing_group_id, invoice_id,
+            "https://api.aiven.io/v1/organization/{}/invoices/{}/lines",
+            cfg.org_id, invoice_id,
         );
         let response = reqwest_client
             .get(&url)

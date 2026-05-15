@@ -21,12 +21,6 @@
                   image = "europe-north1-docker.pkg.dev/nais-io/nais/images/${name}:${tag}";
                   imagePullPolicy = "Always";
                   inherit name;
-                  env = [
-                    {
-                      name = "AIVEN_BILLING_GROUP_ID";
-                      value = "7d14362d-1e2a-4864-b408-1cc631bc4fab";
-                    }
-                  ];
                   envFrom = [
                     { secretRef = "aiven-cost"; }
                   ];
