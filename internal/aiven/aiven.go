@@ -6,9 +6,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
-
-	aivenclient "github.com/aiven/go-client-codegen"
 
 	"github.com/nais/aiven-cost/internal/bigquery"
 	"github.com/sirupsen/logrus"
@@ -16,7 +15,6 @@ import (
 
 type Client struct {
 	client         *http.Client
-	aivenClient    aivenclient.Client
 	apiHost        string
 	apiToken       string
 	orgID          string
@@ -25,13 +23,8 @@ type Client struct {
 }
 
 func New(apiHost, token, orgID, billingGroupID string, logger *logrus.Logger) (*Client, error) {
-	client, err := aivenclient.NewClient(aivenclient.TokenOpt(token), aivenclient.UserAgentOpt("nais-aiven-cost"))
-	if err != nil {
-		return nil, err
-	}
 	return &Client{
 		client:         &http.Client{Timeout: 30 * time.Second},
-		aivenClient:    client,
 		apiHost:        apiHost,
 		apiToken:       token,
 		orgID:          orgID,
@@ -73,40 +66,27 @@ func ParseTenant(tenant string) string {
 	if tenant == "" {
 		return "nav"
 	}
+
 	return tenant
 }
 
-func ParseTeam(team, serviceType string) string {
+func ParseTeam(serviceID, serviceType string) string {
 	switch serviceType {
 	case "kafka", "support_charge", "extra_charge", "credit_consumption":
 		return "nais"
 	default:
-		return team
+
+		parts := strings.SplitN(serviceID, "-", 3)
+		if len(parts) >= 2 {
+			return parts[1]
+		}
+
+		return ""
 	}
 }
 
 func AmountOfDaysInMonth(m time.Month, year int) int {
 	return time.Date(year, m+1, 0, 0, 0, 0, 0, time.UTC).Day()
-}
-
-type orgInvoiceLinesResponse struct {
-	Lines []orgInvoiceLine `json:"lines"`
-}
-
-type orgInvoiceLine struct {
-	BeginTime   string            `json:"begin_time"`
-	Cloud       string            `json:"cloud"`
-	Currency    string            `json:"currency"`
-	Description string            `json:"description"`
-	EndTime     string            `json:"end_time"`
-	LineType    string            `json:"line_type"`
-	Plan        string            `json:"plan"`
-	ProjectID   string            `json:"project_id"`
-	ServiceID   string            `json:"service_id"`
-	ServiceType string            `json:"service_type"`
-	Tags        map[string]string `json:"tags"`
-	Total       string            `json:"total"`
-	TotalUSD    string            `json:"total_usd"`
 }
 
 func (c *Client) doAivenGet(ctx context.Context, path string) ([]byte, error) {
@@ -160,21 +140,6 @@ func (c *Client) GetInvoiceLines(ctx context.Context, invoice Invoice) ([]bigque
 	}
 
 	for _, line := range lines {
-		tags := Tags{}
-		if line.ProjectID != "" && line.ServiceID != "" {
-			fetchedTags, err := c.GetServiceTags(ctx, line.ProjectID, line.ServiceID)
-			if err != nil {
-				c.logger.
-					WithFields(logrus.Fields{
-						"project": line.ProjectID,
-						"service": line.ServiceID,
-					}).
-					WithError(err).
-					Warnf("failed to get service tags")
-			}
-			tags = fetchedTags
-		}
-
 		timestampBegin, err := time.Parse(time.RFC3339, line.BeginTime)
 		if err != nil {
 			return nil, err
@@ -184,42 +149,18 @@ func (c *Client) GetInvoiceLines(ctx context.Context, invoice Invoice) ([]bigque
 			BillingGroupId: c.billingGroupID,
 			InvoiceId:      invoice.InvoiceId,
 			ProjectName:    line.ProjectID,
-			Environment:    tags.Environment,
-			Team:           ParseTeam(tags.Team, line.ServiceType),
+			Environment:    line.Tags.Environment,
+			Team:           ParseTeam(line.ServiceID, line.ServiceType),
 			Service:        ParseServiceType(line.LineType, line.ServiceType),
 			ServiceName:    line.ServiceID,
-			Tenant:         ParseTenant(tags.Tenant),
+			Tenant:         ParseTenant(line.Tags.Tenant),
 			Status:         invoice.Status,
 			Cost:           line.Total,
 			Currency:       line.Currency,
 			Date:           fmt.Sprintf("%02d-%02d", timestampBegin.Year(), timestampBegin.Month()),
 			NumberOfDays:   AmountOfDaysInMonth(timestampBegin.Month(), timestampBegin.Year()),
 		})
-
 	}
 
 	return ret, nil
-}
-
-func (c *Client) GetServiceTags(ctx context.Context, projectName, serviceName string) (Tags, error) {
-	tags := struct {
-		Tags Tags `json:"tags"`
-	}{}
-
-	resp, err := c.aivenClient.ProjectServiceTagsList(ctx, projectName, serviceName)
-	if err != nil {
-		return Tags{}, err
-	}
-
-	if val, ok := resp["tenant"]; ok {
-		tags.Tags.Tenant = val
-	}
-	if val, ok := resp["environment"]; ok {
-		tags.Tags.Environment = val
-	}
-	if val, ok := resp["team"]; ok {
-		tags.Tags.Team = val
-	}
-
-	return tags.Tags, nil
 }
