@@ -1,6 +1,6 @@
 module github.com/nais/aiven-cost
 
-go 1.26.3
+go 1.26
 
 tool (
 	github.com/securego/gosec/v2/cmd/gosec
