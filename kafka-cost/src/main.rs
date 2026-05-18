@@ -224,20 +224,19 @@ async fn extract(
         .cloned()
         .collect();
 
-    assert!(
-        &kafka_invoice_lines
+    if !kafka_invoice_lines
+        .iter()
+        .all(|k| !k.tags.tenant.is_empty() && !k.tags.environment.is_empty())
+    {
+        bail!("Missing environment & tenant in AivenTags — check billing tags are set in Aiven");
+    }
+    if !kafka_tiered_storage_cost_invoice_lines.iter().all(|k1| {
+        kafka_invoice_lines
             .iter()
-            .all(|k| !k.tags.tenant.is_empty() && !k.tags.environment.is_empty()),
-        "Missing environment & tenant out of the`AivenTags` we set over at Aiven",
-    );
-    assert!(
-        &kafka_tiered_storage_cost_invoice_lines.iter().all(|k1| {
-            kafka_invoice_lines
-                .iter()
-                .any(|k2| k2.service_name == k1.service_name && k1.project_name == k2.project_name)
-        }),
-        "Unable to find kafka instance tiered storage belongs to",
-    );
+            .any(|k2| k2.service_name == k1.service_name && k1.project_name == k2.project_name)
+    }) {
+        bail!("Unable to find kafka instance that tiered storage line belongs to");
+    }
 
     info!("Fetching topics per kafka invoice line");
     // There's a bunch of suspicious try_join_alls in this codebase, they should probably be chunked

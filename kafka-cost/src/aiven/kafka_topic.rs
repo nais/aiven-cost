@@ -116,10 +116,15 @@ impl AivenApiKafkaTopic {
                 }
             };
         self.partitions = topic_data.partitions;
-        assert!(
-            self.tags.iter().all(|(k, v)| &topic_data.tags[k] == v) && self.name == topic_data.name,
-            "topic data doesn't match..."
-        );
+        if !(self.tags.iter().all(|(k, v)| &topic_data.tags[k] == v) && self.name == topic_data.name) {
+            bail!(
+                "topic data doesn't match: expected name='{}' got name='{}', tags={:?} vs {:?}",
+                self.name,
+                topic_data.name,
+                self.tags,
+                topic_data.tags
+            );
+        }
         Ok(self.clone())
     }
 
