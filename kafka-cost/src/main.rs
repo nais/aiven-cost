@@ -427,7 +427,7 @@ fn transform(
 
             for tiered_storage_line in kafka_tiered_storage_cost_lines {
                 if tiered_storage_line.service_name != instance.service_name
-                    && tiered_storage_line.project_name != tenant_env.project_name
+                    || tiered_storage_line.project_name != tenant_env.project_name
                 {
                     continue;
                 }
