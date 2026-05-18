@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use color_eyre::eyre::{Result, bail};
 use futures::stream::{self, StreamExt};
 use serde::Deserialize;
-use tracing::info;
+use tracing::{info, warn};
 
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(rename_all = "UPPERCASE")]
@@ -174,7 +174,13 @@ impl AivenApiKafkaTopic {
 
         Ok(topics_with_partitions
             .into_iter()
-            .filter_map(Result::ok)
+            .filter_map(|r| match r {
+                Ok(t) => Some(t),
+                Err(e) => {
+                    warn!("Failed to fetch partitions for topic, excluding from cost calculation: {e}");
+                    None
+                }
+            })
             .collect())
     }
 }

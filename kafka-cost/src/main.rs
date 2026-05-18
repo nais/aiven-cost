@@ -86,12 +86,15 @@ impl Cfg {
     fn new() -> Self {
         Self {
             // Aiven stuff
-            aiven_api_token: std::env::var("AIVEN_API_TOKEN").expect("api token"),
+            aiven_api_token: std::env::var("AIVEN_API_TOKEN").expect("AIVEN_API_TOKEN env var"),
             org_id: std::env::var("AIVEN_ORG_ID").expect("AIVEN_ORG_ID env var"),
             // BQ stuff
-            bigquery_project_id: "nais-io".into(),
-            bigquery_dataset: "aiven_cost_regional".into(),
-            bigquery_table: "kafka_cost".into(),
+            bigquery_project_id: std::env::var("BIGQUERY_PROJECT_ID")
+                .unwrap_or_else(|_| "nais-io".into()),
+            bigquery_dataset: std::env::var("BIGQUERY_DATASET")
+                .unwrap_or_else(|_| "aiven_cost_regional".into()),
+            bigquery_table: std::env::var("BIGQUERY_TABLE")
+                .unwrap_or_else(|_| "kafka_cost".into()),
         }
     }
 }
@@ -205,7 +208,7 @@ async fn extract(
         invoices.len()
     );
 
-    info!("Getting invoice lines for kakfa");
+    info!("Getting invoice lines for kafka");
     let kafka_invoice_lines: Vec<AivenApiInvoiceLine> =
         try_join_all(invoices.iter().map(|invoice| {
             AivenApiInvoiceLine::from_aiven_api(aiven_client, cfg, &invoice.id, &invoice.state)
@@ -497,7 +500,7 @@ fn transform(
         .filter(|t| !unwanted_topics.contains(t))
         .collect();
     info!("Found {} teams with topics", &cleaned_teams.len());
-    if unwanted_topics.len() > 0 {
+    if !unwanted_topics.is_empty() {
         info!("Topics we were not able to assign: {unwanted_topics:?}");
     }
 
