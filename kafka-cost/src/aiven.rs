@@ -37,11 +37,22 @@ impl Display for AivenInvoiceState {
 }
 
 #[derive(Debug, Deserialize)]
+struct InvoicePeriod {
+    begin_time: DateTime<Utc>,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct AivenInvoice {
     #[serde(rename(deserialize = "invoice_number"))]
     pub id: String,
     pub state: AivenInvoiceState,
-    pub period_begin: DateTime<Utc>,
+    invoice_period: InvoicePeriod,
+}
+
+impl AivenInvoice {
+    pub fn period_begin(&self) -> DateTime<Utc> {
+        self.invoice_period.begin_time
+    }
 }
 
 impl AivenInvoice {
