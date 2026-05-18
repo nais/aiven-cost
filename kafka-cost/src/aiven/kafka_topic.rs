@@ -145,6 +145,15 @@ impl AivenApiKafkaTopic {
             .bearer_auth(&cfg.aiven_api_token)
             .send()
             .await?;
+
+        if response.status() == reqwest::StatusCode::SERVICE_UNAVAILABLE {
+            warn!("Kafka service '{kafka_name}' in project '{project_name}' is unavailable (powered off?), skipping");
+            return Ok(vec![]);
+        }
+        if !response.status().is_success() {
+            bail!("Unexpected status {} from GET {url}", response.status());
+        }
+
         let response_status = &response.status();
         let Ok(mut response_body) =
             serde_json::from_str::<HashMap<String, serde_json::Value>>(&(response.text().await?))
