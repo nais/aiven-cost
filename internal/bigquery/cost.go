@@ -157,4 +157,3 @@ func (c *Client) insertCostItemsBatch(ctx context.Context, lines []Line) error {
 func bqEscape(s string) string {
 	return strings.ReplaceAll(s, "'", "''")
 }
-
