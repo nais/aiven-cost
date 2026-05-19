@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -72,10 +73,33 @@ func ParseTenant(tenant string) string {
 	return tenant
 }
 
-func isServiceOwnedByNais(serviceType string) string {
+func isServiceOwnedByNais(serviceType, serviceID string) string {
+	if serviceID == "" {
+		return "nais"
+	}
+
 	switch serviceType {
 	case "kafka", "support_charge", "extra_charge", "credit_consumption":
 		return "nais"
+	default:
+		return ""
+	}
+}
+
+func teamFromProject(projectID string) string {
+	lower := strings.ToLower(projectID)
+	switch {
+	case
+		lower == "nav-infrastructure",
+		strings.HasPrefix(lower, "ci-"),
+		strings.HasPrefix(lower, "dev-nais"),
+		strings.HasPrefix(lower, "test-nais"),
+		strings.HasSuffix(lower, "-management"):
+		return "nais"
+	case lower == "nav-logs":
+		return "log"
+	case lower == "leesah-game-prod":
+		return "leesah"
 	default:
 		return ""
 	}
@@ -174,17 +198,29 @@ func (c *Client) GetInvoiceLines(ctx context.Context, invoice Invoice, bqTeams m
 	}
 
 	for _, line := range lines {
+		if line.ServiceID == "" && line.ServiceType == "" {
+			if cost, err := strconv.ParseFloat(line.Total, 64); err == nil && cost <= 0 {
+				continue
+			}
+		}
+
 		timestampBegin, err := time.Parse(time.RFC3339, line.BeginTime)
 		if err != nil {
 			return nil, err
 		}
 
-		team := isServiceOwnedByNais(line.ServiceType)
+		team := teamFromProject(line.ProjectID)
+		if team == "" {
+			team = isServiceOwnedByNais(line.ServiceType, line.ServiceID)
+		}
 		if team == "" {
 			team = bqTeams[line.ProjectID+"/"+line.ServiceID]
 		}
 		if team == "" {
 			team = c.getTeamTag(ctx, line.ProjectID, line.ServiceID)
+		}
+		if team == "nais-system" {
+			team = "nais"
 		}
 		if team == "" {
 			c.logger.Warnf("no team found for service %s/%s", line.ProjectID, line.ServiceID)
