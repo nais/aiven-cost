@@ -1,6 +1,6 @@
 use std::{collections::HashMap, env, io::IsTerminal};
 
-use chrono::{Datelike, Months, NaiveDate, Utc};
+use chrono::{Datelike, NaiveDate, Utc};
 use color_eyre::eyre::{Context, Result, anyhow, bail};
 use futures_util::future::try_join_all;
 use gcloud_bigquery::{
@@ -24,29 +24,20 @@ mod aiven;
 use crate::aiven::AivenApiKafkaTopic;
 use aiven::{AivenApiInvoiceLine, AivenInvoice, KafkaInvoiceLineCostType};
 
-/// Returns (starting_date, ending_date) pairs for each month from the month
-/// after `from` (format: "YYYY-MM") up to and including the current month.
-fn months_since(from: &str) -> Result<Vec<(String, String)>> {
+/// Returns (starting_date, ending_date) covering from the month after `from`
+/// (format: "YYYY-MM") through the last day of the current month.
+fn invoice_date_range(from: &str) -> Result<(String, String)> {
     let start = NaiveDate::parse_from_str(&format!("{from}-01"), "%Y-%m-%d")?
-        .checked_add_months(Months::new(1))
-        .ok_or_else(|| color_eyre::eyre::eyre!("date overflow computing month range"))?;
+        .checked_add_months(chrono::Months::new(1))
+        .ok_or_else(|| color_eyre::eyre::eyre!("date overflow computing start date"))?;
     let now = Utc::now().date_naive();
-    let current_month = NaiveDate::from_ymd_opt(now.year(), now.month(), 1)
-        .ok_or_else(|| color_eyre::eyre::eyre!("failed to compute current month start"))?;
-
-    let mut months = Vec::new();
-    let mut cursor = start;
-    while cursor <= current_month {
-        let next = cursor
-            .checked_add_months(Months::new(1))
-            .ok_or_else(|| color_eyre::eyre::eyre!("date overflow iterating months"))?;
-        let last_day = next
-            .pred_opt()
-            .ok_or_else(|| color_eyre::eyre::eyre!("date underflow computing last day"))?;
-        months.push((cursor.format("%Y-%m-%d").to_string(), last_day.format("%Y-%m-%d").to_string()));
-        cursor = next;
-    }
-    Ok(months)
+    let end = NaiveDate::from_ymd_opt(now.year(), now.month(), 1)
+        .ok_or_else(|| color_eyre::eyre::eyre!("failed to compute current month start"))?
+        .checked_add_months(chrono::Months::new(1))
+        .ok_or_else(|| color_eyre::eyre::eyre!("date overflow computing end date"))?
+        .pred_opt()
+        .ok_or_else(|| color_eyre::eyre::eyre!("date underflow computing last day"))?;
+    Ok((start.format("%Y-%m-%d").to_string(), end.format("%Y-%m-%d").to_string()))
 }
 
 pub fn init_tracing_subscriber() -> Result<()> {
@@ -167,14 +158,11 @@ async fn main() -> Result<()> {
         latest_date_string
     );
 
-    info!("Fetching invoices by month");
-    let mut invoices: Vec<AivenInvoice> = Vec::new();
-    for (starting_date, ending_date) in months_since(&latest_date_string)? {
-        info!("Fetching invoices for {starting_date} to {ending_date}");
-        let mut month_invoices =
-            AivenInvoice::from_aiven_api(&aiven_client, &cfg, &starting_date, &ending_date).await?;
-        invoices.append(&mut month_invoices);
-    }
+    info!("Fetching invoices");
+    let (starting_date, ending_date) = invoice_date_range(&latest_date_string)?;
+    info!("Fetching invoices from {starting_date} to {ending_date}");
+    let invoices =
+        AivenInvoice::from_aiven_api(&aiven_client, &cfg, &starting_date, &ending_date).await?;
     info!("Collected {} invoice(s) in total", invoices.len());
 
     let (kafka_base_cost_lines, kafka_base_tiered_storage_lines) =
