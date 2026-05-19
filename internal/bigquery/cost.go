@@ -53,6 +53,22 @@ func (c *Client) FetchCostItemIDAndStatus(ctx context.Context) (map[string]strin
 	return costItems, nil
 }
 
+func (c *Client) FetchLatestPaidDate(ctx context.Context) (string, error) {
+	q := c.client.Query(`SELECT MAX(date) FROM ` + c.client.Project() + "." + c.dataset + "." + c.costItemsTable + ` WHERE status = 'paid'`)
+	it, err := q.Read(ctx)
+	if err != nil {
+		return "", fmt.Errorf("failed to fetch latest paid date: %w", err)
+	}
+	var values []bigquery.Value
+	if err := it.Next(&values); err != nil {
+		return "", fmt.Errorf("failed to read latest paid date: %w", err)
+	}
+	if len(values) == 0 || values[0] == nil {
+		return "", fmt.Errorf("no paid invoices found in bigquery")
+	}
+	return values[0].(string), nil
+}
+
 func (c *Client) DeleteUnpaid(ctx context.Context) error {
 	q := c.client.Query("DELETE FROM " + c.client.Project() + "." + c.dataset + "." + c.costItemsTable + " WHERE status in ('estimate', 'mailed')")
 	if _, err := q.Read(ctx); err != nil {

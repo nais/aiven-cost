@@ -33,8 +33,8 @@ func New(apiHost, token, orgID, billingGroupID string, logger *logrus.Logger) (*
 	}, nil
 }
 
-func (c *Client) GetInvoices(ctx context.Context) ([]Invoice, error) {
-	path := fmt.Sprintf("/v1/organization/%s/invoices", c.orgID)
+func (c *Client) GetInvoices(ctx context.Context, startingDate, endingDate string) ([]Invoice, error) {
+	path := fmt.Sprintf("/v1/organization/%s/invoices?starting_date=%s&ending_date=%s", c.orgID, startingDate, endingDate)
 	body, err := c.doAivenGet(ctx, path)
 	if err != nil {
 		return nil, err

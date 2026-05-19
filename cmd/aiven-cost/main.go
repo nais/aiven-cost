@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/nais/aiven-cost/internal/aiven"
 	"github.com/nais/aiven-cost/internal/bigquery"
@@ -72,10 +73,30 @@ func run(cfg *config.Config, logger *logrus.Logger) error {
 		return fmt.Errorf("failed to fetch cost item id and status: %w", err)
 	}
 
-	logger.Infof("fetch aiven invoice ids")
-	aivenInvoices, err := aivenClient.GetInvoices(ctx)
+	logger.Infof("fetch latest paid date from bigquery")
+	latestPaidDate, err := bqClient.FetchLatestPaidDate(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to get invoice ids: %w", err)
+		return fmt.Errorf("failed to fetch latest paid date: %w", err)
+	}
+	logger.Infof("latest paid date: %s", latestPaidDate)
+
+	logger.Infof("fetch aiven invoices by month range")
+	invoicesByID := make(map[string]aiven.Invoice)
+	for _, month := range monthsRange(latestPaidDate) {
+		firstOfMonth := month.Format("2006-01-02")
+		lastOfMonth := month.AddDate(0, 1, -1).Format("2006-01-02")
+		logger.Infof("fetching invoices for %s to %s", firstOfMonth, lastOfMonth)
+		invoices, err := aivenClient.GetInvoices(ctx, firstOfMonth, lastOfMonth)
+		if err != nil {
+			return fmt.Errorf("failed to get invoices for %s: %w", firstOfMonth, err)
+		}
+		for _, inv := range invoices {
+			invoicesByID[inv.InvoiceId] = inv
+		}
+	}
+	aivenInvoices := make([]aiven.Invoice, 0, len(invoicesByID))
+	for _, inv := range invoicesByID {
+		aivenInvoices = append(aivenInvoices, inv)
 	}
 
 	logger.Infof("filter out paid invoices")
@@ -105,4 +126,23 @@ func filterPaidInvoices(aivenInvoices []aiven.Invoice, bqInvoices map[string]str
 		unprocessedInvoices = append(unprocessedInvoices, invoice)
 	}
 	return unprocessedInvoices
+}
+
+// monthsRange returns the first day of each month from the month after latestPaidDate
+// (format "YYYY-MM") up to and including the current month.
+func monthsRange(latestPaidDate string) []time.Time {
+	parsed, err := time.Parse("2006-01", latestPaidDate)
+	if err != nil {
+		panic(fmt.Sprintf("invalid latestPaidDate format %q: %v", latestPaidDate, err))
+	}
+	start := parsed.AddDate(0, 1, 0)
+	now := time.Now().UTC()
+	current := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+
+	var months []time.Time
+	for !start.After(current) {
+		months = append(months, start)
+		start = start.AddDate(0, 1, 0)
+	}
+	return months
 }
