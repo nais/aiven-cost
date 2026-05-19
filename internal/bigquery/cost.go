@@ -4,10 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"cloud.google.com/go/bigquery"
 	"google.golang.org/api/iterator"
 )
+
+const insertBatchSize = 500
 
 func (c *Client) FetchDistinctDates(ctx context.Context) (map[string]struct{}, error) {
 	q := c.client.Query(`SELECT DISTINCT date FROM ` + c.client.Project() + "." + c.dataset + "." + c.costItemsTable)
@@ -102,9 +105,56 @@ func (c *Client) DeleteUnpaid(ctx context.Context) error {
 }
 
 func (c *Client) InsertCostItems(ctx context.Context, lines []Line) error {
-	err := c.client.Dataset(c.dataset).Table(c.costItemsTable).Inserter().Put(ctx, lines)
-	if err != nil {
-		return fmt.Errorf("failed to insert cost item: %w", err)
+	for i := 0; i < len(lines); i += insertBatchSize {
+		batch := lines[i:min(i+insertBatchSize, len(lines))]
+		if err := c.insertCostItemsBatch(ctx, batch); err != nil {
+			return err
+		}
 	}
 	return nil
 }
+
+func (c *Client) insertCostItemsBatch(ctx context.Context, lines []Line) error {
+	table := "`" + c.client.Project() + "." + c.dataset + "." + c.costItemsTable + "`"
+	var sb strings.Builder
+	sb.WriteString("INSERT INTO ")
+	sb.WriteString(table)
+	sb.WriteString(" (billing_group_id, invoice_id, project_name, environment, team, service, service_name, tenant, status, cost, currency, date, number_of_days) VALUES ")
+	for i, l := range lines {
+		if i > 0 {
+			sb.WriteString(", ")
+		}
+		fmt.Fprintf(&sb, "('%s','%s','%s','%s','%s','%s','%s','%s','%s','%s','%s','%s',%d)",
+			bqEscape(l.BillingGroupId),
+			bqEscape(l.InvoiceId),
+			bqEscape(l.ProjectName),
+			bqEscape(l.Environment),
+			bqEscape(l.Team),
+			bqEscape(l.Service),
+			bqEscape(l.ServiceName),
+			bqEscape(l.Tenant),
+			bqEscape(l.Status),
+			bqEscape(l.Cost),
+			bqEscape(l.Currency),
+			bqEscape(l.Date),
+			l.NumberOfDays,
+		)
+	}
+	job, err := c.client.Query(sb.String()).Run(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to run insert cost items query: %w", err)
+	}
+	status, err := job.Wait(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to wait for insert cost items job: %w", err)
+	}
+	if err := status.Err(); err != nil {
+		return fmt.Errorf("insert cost items job failed: %w", err)
+	}
+	return nil
+}
+
+func bqEscape(s string) string {
+	return strings.ReplaceAll(s, "'", "''")
+}
+
