@@ -73,6 +73,12 @@ func run(cfg *config.Config, logger *logrus.Logger) error {
 		return fmt.Errorf("failed to fetch cost item id and status: %w", err)
 	}
 
+	logger.Infof("fetch service teams from bigquery")
+	bqTeams, err := bqClient.FetchServiceTeams(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to fetch service teams: %w", err)
+	}
+
 	logger.Infof("fetch latest paid date from bigquery")
 	latestPaidDate, err := bqClient.FetchLatestPaidDate(ctx)
 	if err != nil {
@@ -103,7 +109,7 @@ func run(cfg *config.Config, logger *logrus.Logger) error {
 	unprocessedInvoices := filterPaidInvoices(aivenInvoices, bqInvoices)
 	logger.Infof("fetch invoice details from aiven and insert into bigquery for %d invoices of a total of %d", len(unprocessedInvoices), len(aivenInvoices))
 	for _, invoice := range unprocessedInvoices {
-		invoiceLines, err := aivenClient.GetInvoiceLines(ctx, invoice)
+		invoiceLines, err := aivenClient.GetInvoiceLines(ctx, invoice, bqTeams)
 		if err != nil {
 			return fmt.Errorf("failed to get invoice details for invoice %s: %w", invoice.InvoiceId, err)
 		}

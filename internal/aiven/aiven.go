@@ -19,6 +19,7 @@ type Client struct {
 	apiToken       string
 	orgID          string
 	billingGroupID string
+	tagCache       map[string]string
 	logger         *logrus.Logger
 }
 
@@ -29,6 +30,7 @@ func New(apiHost, token, orgID, billingGroupID string, logger *logrus.Logger) (*
 		apiToken:       token,
 		orgID:          orgID,
 		billingGroupID: billingGroupID,
+		tagCache:       make(map[string]string),
 		logger:         logger,
 	}, nil
 }
@@ -70,17 +72,24 @@ func ParseTenant(tenant string) string {
 	return tenant
 }
 
+func isServiceOwnedByNais(serviceType string) string {
+	switch serviceType {
+	case "kafka", "support_charge", "extra_charge", "credit_consumption":
+		return "nais"
+	default:
+		return ""
+	}
+}
+
 func ParseTeam(serviceID, serviceType string) string {
 	switch serviceType {
 	case "kafka", "support_charge", "extra_charge", "credit_consumption":
 		return "nais"
 	default:
-
 		parts := strings.SplitN(serviceID, "-", 3)
 		if len(parts) >= 2 {
 			return parts[1]
 		}
-
 		return ""
 	}
 }
@@ -131,7 +140,32 @@ func (c *Client) getOrgInvoiceLines(ctx context.Context, invoiceNumber string) (
 	return out.Lines, nil
 }
 
-func (c *Client) GetInvoiceLines(ctx context.Context, invoice Invoice) ([]bigquery.Line, error) {
+func (c *Client) getTeamTag(ctx context.Context, projectID, serviceID string) string {
+	key := projectID + "/" + serviceID
+	if team, ok := c.tagCache[key]; ok {
+		return team
+	}
+	path := fmt.Sprintf("/v1/project/%s/service/%s/tags", projectID, serviceID)
+	body, err := c.doAivenGet(ctx, path)
+	if err != nil {
+		c.logger.Warnf("failed to fetch tags for service %s/%s: %v", projectID, serviceID, err)
+		c.tagCache[key] = ""
+		return ""
+	}
+	var out struct {
+		Tags map[string]string `json:"tags"`
+	}
+	if err := json.Unmarshal(body, &out); err != nil {
+		c.logger.Warnf("failed to parse tags for service %s/%s: %v", projectID, serviceID, err)
+		c.tagCache[key] = ""
+		return ""
+	}
+	team := out.Tags["team"]
+	c.tagCache[key] = team
+	return team
+}
+
+func (c *Client) GetInvoiceLines(ctx context.Context, invoice Invoice, bqTeams map[string]string) ([]bigquery.Line, error) {
 	ret := []bigquery.Line{}
 
 	lines, err := c.getOrgInvoiceLines(ctx, invoice.InvoiceId)
@@ -145,12 +179,23 @@ func (c *Client) GetInvoiceLines(ctx context.Context, invoice Invoice) ([]bigque
 			return nil, err
 		}
 
+		team := isServiceOwnedByNais(line.ServiceType)
+		if team == "" {
+			team = bqTeams[line.ProjectID+"/"+line.ServiceID]
+		}
+		if team == "" {
+			team = c.getTeamTag(ctx, line.ProjectID, line.ServiceID)
+		}
+		if team == "" {
+			c.logger.Warnf("no team found for service %s/%s", line.ProjectID, line.ServiceID)
+		}
+
 		ret = append(ret, bigquery.Line{
 			BillingGroupId: c.billingGroupID,
 			InvoiceId:      invoice.InvoiceId,
 			ProjectName:    line.ProjectID,
 			Environment:    line.Tags.Environment,
-			Team:           ParseTeam(line.ServiceID, line.ServiceType),
+			Team:           team,
 			Service:        ParseServiceType(line.LineType, line.ServiceType),
 			ServiceName:    line.ServiceID,
 			Tenant:         ParseTenant(line.Tags.Tenant),

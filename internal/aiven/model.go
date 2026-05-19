@@ -1,6 +1,7 @@
 package aiven
 
 type billingTags struct {
+	Team        string `json:"team"`
 	Tenant      string `json:"billing:tenant"`
 	Environment string `json:"billing:environment"`
 }

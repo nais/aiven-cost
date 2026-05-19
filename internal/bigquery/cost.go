@@ -53,6 +53,30 @@ func (c *Client) FetchCostItemIDAndStatus(ctx context.Context) (map[string]strin
 	return costItems, nil
 }
 
+func (c *Client) FetchServiceTeams(ctx context.Context) (map[string]string, error) {
+	q := c.client.Query(`SELECT DISTINCT project_name, service_name, team FROM ` + c.client.Project() + "." + c.dataset + "." + c.costItemsTable + ` WHERE team IS NOT NULL AND team != ''`)
+	it, err := q.Read(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch service teams: %w", err)
+	}
+	teams := make(map[string]string)
+	for {
+		var values []bigquery.Value
+		err := it.Next(&values)
+		if errors.Is(err, iterator.Done) {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("failed to read service teams: %w", err)
+		}
+		if len(values) == 3 && values[0] != nil && values[1] != nil && values[2] != nil {
+			key := values[0].(string) + "/" + values[1].(string)
+			teams[key] = values[2].(string)
+		}
+	}
+	return teams, nil
+}
+
 func (c *Client) FetchLatestPaidDate(ctx context.Context) (string, error) {
 	q := c.client.Query(`SELECT MAX(date) FROM ` + c.client.Project() + "." + c.dataset + "." + c.costItemsTable + ` WHERE status = 'paid'`)
 	it, err := q.Read(ctx)
