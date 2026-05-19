@@ -6,15 +6,6 @@ use serde::Deserialize;
 use tracing::{info, warn};
 
 #[derive(Clone, Debug, Default, Deserialize)]
-#[serde(rename_all = "UPPERCASE")]
-pub enum AivenApiKafkaTopicState {
-    #[default]
-    Active,
-    Configuring,
-    Deleting,
-}
-
-#[derive(Clone, Debug, Default, Deserialize)]
 pub struct AivenApiKafkaTopicPartition {
     /// In bytes according to the Aiven API
     pub remote_size: Option<f64>,
@@ -148,6 +139,10 @@ impl AivenApiKafkaTopic {
 
         if response.status() == reqwest::StatusCode::SERVICE_UNAVAILABLE {
             warn!("Kafka service '{kafka_name}' in project '{project_name}' is unavailable (powered off?), skipping");
+            return Ok(vec![]);
+        }
+        if response.status() == reqwest::StatusCode::NOT_FOUND {
+            warn!("Kafka service '{kafka_name}' in project '{project_name}' not found (deleted?), skipping");
             return Ok(vec![]);
         }
         if !response.status().is_success() {

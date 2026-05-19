@@ -1,6 +1,6 @@
 use std::{collections::HashMap, env, io::IsTerminal};
 
-use chrono::{DateTime, Datelike, NaiveDate, Utc};
+use chrono::{Datelike, Months, NaiveDate, Utc};
 use color_eyre::eyre::{Context, Result, anyhow, bail};
 use futures_util::future::try_join_all;
 use gcloud_bigquery::{
@@ -23,6 +23,31 @@ use tracing_subscriber::{
 mod aiven;
 use crate::aiven::AivenApiKafkaTopic;
 use aiven::{AivenApiInvoiceLine, AivenInvoice, KafkaInvoiceLineCostType};
+
+/// Returns (starting_date, ending_date) pairs for each month from the month
+/// after `from` (format: "YYYY-MM") up to and including the current month.
+fn months_since(from: &str) -> Result<Vec<(String, String)>> {
+    let start = NaiveDate::parse_from_str(&format!("{from}-01"), "%Y-%m-%d")?
+        .checked_add_months(Months::new(1))
+        .ok_or_else(|| color_eyre::eyre::eyre!("date overflow computing month range"))?;
+    let now = Utc::now().date_naive();
+    let current_month = NaiveDate::from_ymd_opt(now.year(), now.month(), 1)
+        .ok_or_else(|| color_eyre::eyre::eyre!("failed to compute current month start"))?;
+
+    let mut months = Vec::new();
+    let mut cursor = start;
+    while cursor <= current_month {
+        let next = cursor
+            .checked_add_months(Months::new(1))
+            .ok_or_else(|| color_eyre::eyre::eyre!("date overflow iterating months"))?;
+        let last_day = next
+            .pred_opt()
+            .ok_or_else(|| color_eyre::eyre::eyre!("date underflow computing last day"))?;
+        months.push((cursor.format("%Y-%m-%d").to_string(), last_day.format("%Y-%m-%d").to_string()));
+        cursor = next;
+    }
+    Ok(months)
+}
 
 pub fn init_tracing_subscriber() -> Result<()> {
     use tracing_subscriber::fmt as layer_fmt;
@@ -77,6 +102,7 @@ fn client() -> Result<reqwest::Client> {
 pub struct Cfg {
     pub aiven_api_token: String,
     pub org_id: String,
+    pub project_filter: Option<String>,
     pub bigquery_project_id: String,
     pub bigquery_dataset: String,
     pub bigquery_table: String,
@@ -88,6 +114,7 @@ impl Cfg {
             // Aiven stuff
             aiven_api_token: std::env::var("AIVEN_API_TOKEN").expect("AIVEN_API_TOKEN env var"),
             org_id: std::env::var("AIVEN_ORG_ID").expect("AIVEN_ORG_ID env var"),
+            project_filter: std::env::var("AIVEN_PROJECT_FILTER").ok(),
             // BQ stuff
             bigquery_project_id: std::env::var("BIGQUERY_PROJECT_ID")
                 .unwrap_or_else(|_| "nais-io".into()),
@@ -118,27 +145,40 @@ async fn main() -> Result<()> {
             .collect();
 
     info!("Next we are finding the latest paid invoice line in BigQuery");
-    let latest_date_string =
-        paid_invoices
-            .iter()
+    let latest_date_string = {
+        let relevant = paid_invoices.iter().filter(|r| {
+            cfg.project_filter
+                .as_ref()
+                .map_or(true, |filter| &r.project_name == filter)
+        });
+        relevant
             .fold("2025-01", |current_oldest, current_invoice| {
                 let current_invoice_date = &current_invoice.date;
                 if **current_invoice_date > *current_oldest {
                     return current_invoice_date;
                 }
                 current_oldest
-            });
-    let date_of_latest_paid_invoice: DateTime<Utc> = DateTime::from_naive_utc_and_offset(
-        NaiveDate::parse_from_str(&format!("{latest_date_string}-01"), "%Y-%m-%d")?.into(),
-        Utc,
-    );
+            })
+            .to_owned()
+    };
     info!(
-        "Latest paid invoice date in BigQuery: {}",
-        date_of_latest_paid_invoice
+        "Latest paid invoice date in BigQuery{}: {}",
+        cfg.project_filter.as_ref().map_or(String::new(), |f| format!(" for project '{f}'")),
+        latest_date_string
     );
 
+    info!("Fetching invoices by month");
+    let mut invoices: Vec<AivenInvoice> = Vec::new();
+    for (starting_date, ending_date) in months_since(&latest_date_string)? {
+        info!("Fetching invoices for {starting_date} to {ending_date}");
+        let mut month_invoices =
+            AivenInvoice::from_aiven_api(&aiven_client, &cfg, &starting_date, &ending_date).await?;
+        invoices.append(&mut month_invoices);
+    }
+    info!("Collected {} invoice(s) in total", invoices.len());
+
     let (kafka_base_cost_lines, kafka_base_tiered_storage_lines) =
-        extract(&aiven_client, &cfg, &date_of_latest_paid_invoice).await?;
+        extract(&aiven_client, &cfg, invoices).await?;
     let data = transform(&kafka_base_cost_lines, &kafka_base_tiered_storage_lines)?;
 
     load(&cfg, &bigquery_client, data).await?;
@@ -157,16 +197,15 @@ async fn get_rows_in_bigquery_table(
         dataset_id: cfg.bigquery_dataset.clone(),
         table_id: cfg.bigquery_table.clone(),
     };
-    let mut reader = match bigquery_client
+    let mut reader = bigquery_client
         .read_table::<ReadRow>(&table_reference, None)
         .await
-    {
-        Ok(r) => r,
-        Err(error) => {
-            warn!("error fetching data from bq: {error:?}");
-            return Ok(Vec::new());
-        }
-    };
+        .wrap_err_with(|| {
+            format!(
+                "Failed to read BigQuery table {}.{}.{}",
+                cfg.bigquery_project_id, cfg.bigquery_dataset, cfg.bigquery_table
+            )
+        })?;
     let mut rows = Vec::new();
     while let Some(row) = reader.next().await? {
         let project_name = row.column::<String>(0)?;
@@ -197,19 +236,15 @@ async fn get_rows_in_bigquery_table(
 async fn extract(
     aiven_client: &reqwest::Client,
     cfg: &Cfg,
-    date_of_latest_paid_invoice: &DateTime<Utc>,
+    invoices: Vec<AivenInvoice>,
 ) -> Result<(Vec<AivenApiInvoiceLine>, Vec<AivenApiInvoiceLine>)> {
-    info!("Fetching invoices");
-    let mut invoices: Vec<_> = AivenInvoice::from_aiven_api(aiven_client, cfg).await?;
-    invoices.retain(|invoice| invoice.period_begin() > *date_of_latest_paid_invoice);
-
     info!(
-        "Found {} invoices not processed in BigQuery",
+        "Processing {} invoice(s)",
         invoices.len()
     );
 
     info!("Getting invoice lines for kafka");
-    let kafka_invoice_lines: Vec<AivenApiInvoiceLine> =
+    let mut kafka_invoice_lines: Vec<AivenApiInvoiceLine> =
         try_join_all(invoices.iter().map(|invoice| {
             AivenApiInvoiceLine::from_aiven_api(aiven_client, cfg, &invoice.id, &invoice.state)
         }))
@@ -217,6 +252,11 @@ async fn extract(
         .into_iter()
         .flatten()
         .collect();
+
+    if let Some(ref filter) = cfg.project_filter {
+        info!("Filtering kafka invoice lines to project '{filter}'");
+        kafka_invoice_lines.retain(|l| l.project_name == *filter);
+    }
 
     let kafka_tiered_storage_cost_invoice_lines: Vec<_> = kafka_invoice_lines
         .iter()

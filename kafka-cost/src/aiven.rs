@@ -50,12 +50,6 @@ pub struct AivenInvoice {
 }
 
 impl AivenInvoice {
-    pub fn period_begin(&self) -> DateTime<Utc> {
-        self.invoice_period.begin_time
-    }
-}
-
-impl AivenInvoice {
     pub fn from_json_obj(input: &serde_json::Value) -> Result<Self> {
         let result = match serde_json::from_value(input.clone()) {
             Ok(line) => line,
@@ -72,10 +66,10 @@ impl AivenInvoice {
         list.iter().map(Self::from_json_obj).collect()
     }
 
-    pub async fn from_aiven_api(aiven_client: &reqwest::Client, cfg: &Cfg) -> Result<Vec<Self>> {
+    pub async fn from_aiven_api(aiven_client: &reqwest::Client, cfg: &Cfg, starting_date: &str, ending_date: &str) -> Result<Vec<Self>> {
         let url = format!(
-            "https://api.aiven.io/v1/organization/{}/invoices",
-            cfg.org_id
+            "https://api.aiven.io/v1/organization/{}/invoices?starting_date={}&ending_date={}",
+            cfg.org_id, starting_date, ending_date
         );
         let response = aiven_client
             .get(&url)
